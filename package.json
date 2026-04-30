@@ -14,7 +14,7 @@
   },
   "files": ["dist"],
   "n8n": {
-    "n8nNodesApiVersion": 1,
+    "n8nNodesApiVersion": 2,
     "credentials": [
       "dist/credentials/OpenRouterApi.credentials.js",
       "dist/credentials/GithubSkillsApi.credentials.js"
@@ -34,7 +34,7 @@
     "@langchain/core": "^0.3.0"
   },
   "peerDependencies": {
-    "n8n-workflow": "*"
+    "n8n-workflow": ">=1.0.0"
   },
   "devDependencies": {
     "typescript": "^5.4.0",
