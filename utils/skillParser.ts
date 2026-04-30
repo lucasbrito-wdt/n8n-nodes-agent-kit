@@ -22,3 +22,11 @@ export function parseSkill(raw: string): Skill {
     content: content.trim(),
   };
 }
+
+export function composeSystemPrompt(base: string, skills: Skill[]): string {
+  if (skills.length === 0) return base;
+  const skillsBlock = skills
+    .map((s) => `## Skill: ${s.name}\n${s.content}`)
+    .join('\n\n');
+  return `${base}\n\n---\n\n${skillsBlock}`;
+}
