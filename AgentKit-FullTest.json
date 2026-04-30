@@ -1,0 +1,368 @@
+{
+  "name": "AgentKit - Full Test: Orchestrator + SubAgents",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "a1b2c3d4-0001-0000-0000-000000000001",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "msg-field",
+              "name": "message",
+              "value": "Pesquise sobre os principais avanços em inteligência artificial em 2025, analise os impactos na indústria e escreva um relatório executivo completo.",
+              "type": "string"
+            },
+            {
+              "id": "session-field",
+              "name": "sessionId",
+              "value": "test-session-001",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a1b2c3d4-0002-0000-0000-000000000002",
+      "name": "Definir Mensagem",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [220, 300]
+    },
+    {
+      "parameters": {
+        "inlineSkills": {
+          "skill": [
+            {
+              "content": "---\nname: pt-br-output\ndescription: Always respond in Brazilian Portuguese.\n---\n\n# Idioma PT-BR\n\nSempre responda em português do Brasil. Termos técnicos podem ficar em inglês quando não houver tradução adequada (AI, LLM, API, etc)."
+            },
+            {
+              "content": "---\nname: structured-output\ndescription: Format all outputs with clear headers and bullet points.\n---\n\n# Structured Output\n\nSempre use:\n- Cabeçalhos Markdown (##, ###)\n- Bullet points para listas\n- **Negrito** para termos-chave\n- Parágrafos curtos (máx. 3 linhas)\n- Linha em branco entre seções"
+            }
+          ]
+        },
+        "enableGithub": false
+      },
+      "id": "a1b2c3d4-0003-0000-0000-000000000003",
+      "name": "Skill Loader",
+      "type": "n8n-nodes-agent-kit.skillLoader",
+      "typeVersion": 1,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "inputField": "message",
+        "sessionIdField": "sessionId",
+        "systemPrompt": "Você é um orquestrador de agentes especialistas. Decomponha tarefas complexas e delegue para os agentes corretos:\n\n- **researcher**: Para pesquisar informações, fatos, dados atuais sobre qualquer tópico\n- **analyst**: Para analisar dados brutos, identificar padrões e extrair insights\n- **writer**: Para redigir documentos finais, relatórios e textos polidos\n\nFluxo recomendado para tarefas complexas:\n1. Chame o **researcher** para coletar dados\n2. Passe os resultados para o **analyst** para análise\n3. Envie a análise para o **writer** redigir o documento final\n4. Consolide e retorne ao usuário\n\nVocê também tem acesso a ferramentas diretas (get_current_date, calculate_stats) para tarefas simples.",
+        "modelOverride": "",
+        "maxIterations": 25,
+        "outputField": "response",
+        "inlineSkills": {
+          "skill": [
+            {
+              "name": "orchestration-rules",
+              "description": "Rules for orchestrating sub-agents effectively",
+              "content": "## Orchestration Rules\n\n1. Sempre use pelo menos 2 sub-agentes para tarefas complexas\n2. Passe o contexto completo ao delegar (não apenas a pergunta original)\n3. Resuma os resultados de cada agente antes de passar ao próximo\n4. A consolidação final é SUA responsabilidade — não delegue\n5. Se um agente falhar, tente uma abordagem diferente antes de desistir"
+            }
+          ]
+        },
+        "guardrails": {
+          "guardrail": [
+            {
+              "name": "anti-jailbreak",
+              "phase": "pre",
+              "type": "jailbreak",
+              "fallbackResponse": "Não posso processar esta solicitação pois viola as políticas de uso."
+            }
+          ]
+        }
+      },
+      "id": "a1b2c3d4-0004-0000-0000-000000000004",
+      "name": "Orquestrador",
+      "type": "n8n-nodes-agent-kit.orchestratorKit",
+      "typeVersion": 1,
+      "position": [720, 300],
+      "credentials": {
+        "openRouterApi": {
+          "id": "CONFIGURE_ME",
+          "name": "OpenRouter"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "dbPath": "=/home/{{ $env.USER }}/.agentkit/test-memory.db",
+        "windowSize": 30
+      },
+      "id": "a1b2c3d4-0005-0000-0000-000000000005",
+      "name": "Memória Compartilhada",
+      "type": "n8n-nodes-agent-kit.agentMemory",
+      "typeVersion": 1,
+      "position": [720, 520]
+    },
+    {
+      "parameters": {
+        "mode": "server",
+        "exposedWorkflows": {
+          "workflow": [
+            {
+              "toolName": "get_current_date",
+              "toolDescription": "Returns the current date and time. No input required.",
+              "webhookUrl": "https://SEU-N8N.com/webhook/get-date"
+            },
+            {
+              "toolName": "calculate_stats",
+              "toolDescription": "Calculates basic statistics (sum, avg, min, max) for a JSON array of numbers. Input: { numbers: [1, 2, 3] }",
+              "webhookUrl": "https://SEU-N8N.com/webhook/calc-stats"
+            }
+          ]
+        }
+      },
+      "id": "a1b2c3d4-0006-0000-0000-000000000006",
+      "name": "MCP Tools - Orquestrador",
+      "type": "n8n-nodes-agent-kit.mcpGateway",
+      "typeVersion": 1,
+      "position": [720, 660]
+    },
+    {
+      "parameters": {
+        "agentName": "researcher",
+        "agentDescription": "Specialized research agent. Use for gathering information, facts, and data about any topic. Provide the research topic as the task.",
+        "inputField": "message",
+        "sessionIdField": "sessionId",
+        "outputField": "response",
+        "systemPrompt": "Você é um agente pesquisador especializado. Sua função é:\n\n1. Buscar informações relevantes e atualizadas sobre o tópico solicitado\n2. Organizar as informações de forma estruturada\n3. Citar fontes quando disponíveis\n4. Focar em dados concretos e verificáveis\n5. Usar as ferramentas de busca disponíveis (search_web, fetch_page)\n\nRetorne sempre um relatório de pesquisa completo e bem organizado.",
+        "modelOverride": "google/gemini-2.5-flash",
+        "maxIterations": 10,
+        "inlineSkills": {
+          "skill": [
+            {
+              "name": "research-methodology",
+              "description": "How to conduct thorough research",
+              "content": "## Research Methodology\n\n**Step 1 - Define scope:** Identify what exactly needs to be researched\n**Step 2 - Search broadly:** Use search_web to get overview\n**Step 3 - Deep dive:** Use fetch_page on the most relevant results\n**Step 4 - Synthesize:** Combine findings into coherent information\n\n**Output format:**\n\n### Pesquisa: [Tópico]\n\n**Resumo:** <1 parágrafo>\n\n**Principais Descobertas:**\n- Descoberta 1 (fonte)\n- Descoberta 2 (fonte)\n\n**Dados e Estatísticas:**\n- Dado relevante 1\n- Dado relevante 2\n\n**Conclusão:** <síntese final>"
+            }
+          ]
+        },
+        "guardrails": {
+          "guardrail": [
+            {
+              "name": "no-secrets-in-output",
+              "phase": "post",
+              "type": "secretKeys",
+              "fallbackResponse": "[REDACTED - output contained potentially sensitive data patterns]"
+            }
+          ]
+        }
+      },
+      "id": "a1b2c3d4-0007-0000-0000-000000000007",
+      "name": "Agente Pesquisador",
+      "type": "n8n-nodes-agent-kit.subAgentKit",
+      "typeVersion": 1,
+      "position": [1000, 80],
+      "credentials": {
+        "openRouterApi": {
+          "id": "CONFIGURE_ME",
+          "name": "OpenRouter"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "server",
+        "exposedWorkflows": {
+          "workflow": [
+            {
+              "toolName": "search_web",
+              "toolDescription": "Search the web for information about a topic. Returns a list of relevant results. Input: { query: string }",
+              "webhookUrl": "https://SEU-N8N.com/webhook/search-web"
+            },
+            {
+              "toolName": "fetch_page",
+              "toolDescription": "Fetch and extract the text content from a given URL. Input: { url: string }",
+              "webhookUrl": "https://SEU-N8N.com/webhook/fetch-page"
+            }
+          ]
+        }
+      },
+      "id": "a1b2c3d4-0008-0000-0000-000000000008",
+      "name": "MCP Tools - Pesquisador",
+      "type": "n8n-nodes-agent-kit.mcpGateway",
+      "typeVersion": 1,
+      "position": [1240, 0]
+    },
+    {
+      "parameters": {
+        "agentName": "analyst",
+        "agentDescription": "Data analysis agent. Use when you have raw data or research results that need interpretation, pattern identification, trend analysis, and insight extraction.",
+        "inputField": "message",
+        "sessionIdField": "sessionId",
+        "outputField": "response",
+        "systemPrompt": "Você é um agente analista especializado em dados e tendências. Sua função é:\n\n1. Receber dados brutos ou resultados de pesquisa\n2. Identificar padrões, tendências e correlações\n3. Extrair insights acionáveis com base em evidências\n4. Quantificar impactos e riscos quando possível\n5. Produzir análises objetivas e bem fundamentadas\n6. Sempre incluir uma conclusão clara com nível de confiança\n\nFoque em qualidade analítica, não apenas em resumir os dados recebidos.",
+        "modelOverride": "google/gemini-2.5-flash",
+        "maxIterations": 8,
+        "inlineSkills": {
+          "skill": [
+            {
+              "name": "analysis-framework",
+              "description": "Structured framework for data analysis",
+              "content": "## Analysis Framework\n\nUse este framework para toda análise:\n\n**1. Resumo Executivo** (2-3 frases)\n**2. Contexto** (o que foi analisado e por quê)\n**3. Principais Insights** (máx. 5, com evidências)\n**4. Tendências Identificadas** (crescimento, declínio, estabilidade)\n**5. Riscos e Oportunidades**\n**6. Recomendações** (ações concretas)\n**7. Nível de Confiança:** Baixo / Médio / Alto\n   *Motivo: [explicar limitações dos dados se houver]*"
+            },
+            {
+              "name": "data-validation",
+              "description": "How to validate data quality before analysis",
+              "content": "## Data Validation Checklist\n\nAntes de analisar, sempre verifique:\n- [ ] Os dados estão completos? (mencione lacunas)\n- [ ] Há outliers ou anomalias? (destaque se houver)\n- [ ] A fonte dos dados é confiável? (declare suposições)\n- [ ] O período de tempo está claro?\n\nSe os dados forem insuficientes para uma análise robusta, declare isso explicitamente e analise com as ressalvas necessárias."
+            }
+          ]
+        },
+        "guardrails": {
+          "guardrail": [
+            {
+              "name": "pii-detection",
+              "phase": "pre",
+              "type": "pii",
+              "fallbackResponse": "A tarefa contém dados pessoais identificáveis (PII). Por favor, anonimize os dados antes de solicitar análise."
+            },
+            {
+              "name": "nsfw-content",
+              "phase": "pre",
+              "type": "nsfw",
+              "fallbackResponse": "Conteúdo inadequado detectado na solicitação. Análise cancelada."
+            }
+          ]
+        }
+      },
+      "id": "a1b2c3d4-0009-0000-0000-000000000009",
+      "name": "Agente Analista",
+      "type": "n8n-nodes-agent-kit.subAgentKit",
+      "typeVersion": 1,
+      "position": [1000, 320],
+      "credentials": {
+        "openRouterApi": {
+          "id": "CONFIGURE_ME",
+          "name": "OpenRouter"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "agentName": "writer",
+        "agentDescription": "Professional writing agent. Use when you need polished final documents, executive reports, summaries, or any content ready for end-user delivery. Pass the full research and analysis context.",
+        "inputField": "message",
+        "sessionIdField": "sessionId",
+        "outputField": "response",
+        "systemPrompt": "Você é um redator profissional especializado em documentos executivos. Sua função é:\n\n1. Receber dados e análises dos outros agentes\n2. Transformar em documentos bem escritos e estruturados\n3. Adaptar o tom ao tipo de documento solicitado\n4. Garantir clareza, coesão e fluidez no texto\n5. Produzir um documento pronto para entrega ao usuário final\n\nSeu output deve ser COMPLETO — introdução, desenvolvimento e conclusão. Não resuma o que foi pedido, escreva o documento completo.",
+        "modelOverride": "anthropic/claude-haiku-4-5-20251001",
+        "maxIterations": 8,
+        "inlineSkills": {
+          "skill": [
+            {
+              "name": "executive-report-template",
+              "description": "Standard template for executive reports",
+              "content": "## Executive Report Template\n\n```markdown\n# [Título do Relatório]\n**Data:** [data atual]\n**Classificação:** Executivo\n\n---\n\n## Sumário Executivo\n[2-3 parágrafos com o essencial]\n\n## Contexto e Objetivo\n[Por que este relatório existe e o que cobre]\n\n## Principais Descobertas\n[Findings com evidências e dados]\n\n## Análise\n[Interpretação profunda dos dados]\n\n## Conclusões\n[O que os dados significam]\n\n## Recomendações\n1. [Ação prioritária]\n2. [Ação secundária]\n3. [Ação de longo prazo]\n\n## Referências\n[Fontes utilizadas]\n```\n\nAdapte a estrutura ao tipo de documento conforme necessário."
+            },
+            {
+              "name": "writing-style-guide",
+              "description": "Professional writing style for executive documents",
+              "content": "## Writing Style Guide\n\n**Tom:** Profissional, direto, sem jargão desnecessário\n\n**Regras:**\n- Use voz ativa preferencialmente\n- Frases curtas (máx. 20 palavras)\n- Uma ideia por parágrafo\n- **Negrito** para termos-chave na primeira menção\n- Números por extenso até 10, algarismos para 11+\n- Evite: 'é importante salientar', 'cabe ressaltar', 'no que tange'\n- Prefira: dados concretos > afirmações vagas"
+            }
+          ]
+        },
+        "guardrails": {
+          "guardrail": [
+            {
+              "name": "quality-check",
+              "phase": "post",
+              "type": "customModel",
+              "fallbackResponse": "O documento gerado não atendeu ao padrão de qualidade mínimo. Tente novamente fornecendo mais contexto ao agente escritor.",
+              "prompt": "Evaluate the following text. Does it: (1) have a clear document structure with at least an introduction and conclusion? (2) appear to be professionally written in Portuguese? (3) contain substantive content (not just headings)? Answer ONLY 'no' if it fails any of these criteria. Otherwise answer 'yes'."
+            }
+          ]
+        }
+      },
+      "id": "a1b2c3d4-0010-0000-0000-000000000010",
+      "name": "Agente Escritor",
+      "type": "n8n-nodes-agent-kit.subAgentKit",
+      "typeVersion": 1,
+      "position": [1000, 560],
+      "credentials": {
+        "openRouterApi": {
+          "id": "CONFIGURE_ME",
+          "name": "OpenRouter"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "dbPath": "=/home/{{ $env.USER }}/.agentkit/writer-memory.db",
+        "windowSize": 20
+      },
+      "id": "a1b2c3d4-0011-0000-0000-000000000011",
+      "name": "Memória do Escritor",
+      "type": "n8n-nodes-agent-kit.agentMemory",
+      "typeVersion": 1,
+      "position": [1240, 560]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [{ "node": "Definir Mensagem", "type": "main", "index": 0 }]
+      ]
+    },
+    "Definir Mensagem": {
+      "main": [
+        [{ "node": "Skill Loader", "type": "main", "index": 0 }]
+      ]
+    },
+    "Skill Loader": {
+      "main": [
+        [{ "node": "Orquestrador", "type": "main", "index": 0 }]
+      ]
+    },
+    "Memória Compartilhada": {
+      "ai_memory": [
+        [{ "node": "Orquestrador", "type": "ai_memory", "index": 0 }]
+      ]
+    },
+    "MCP Tools - Orquestrador": {
+      "ai_tool": [
+        [{ "node": "Orquestrador", "type": "ai_tool", "index": 0 }]
+      ]
+    },
+    "Agente Pesquisador": {
+      "ai_agent": [
+        [{ "node": "Orquestrador", "type": "ai_agent", "index": 0 }]
+      ]
+    },
+    "Agente Analista": {
+      "ai_agent": [
+        [{ "node": "Orquestrador", "type": "ai_agent", "index": 0 }]
+      ]
+    },
+    "Agente Escritor": {
+      "ai_agent": [
+        [{ "node": "Orquestrador", "type": "ai_agent", "index": 0 }]
+      ]
+    },
+    "MCP Tools - Pesquisador": {
+      "ai_tool": [
+        [{ "node": "Agente Pesquisador", "type": "ai_tool", "index": 0 }]
+      ]
+    },
+    "Memória do Escritor": {
+      "ai_memory": [
+        [{ "node": "Agente Escritor", "type": "ai_memory", "index": 0 }]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
