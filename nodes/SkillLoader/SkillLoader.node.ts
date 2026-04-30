@@ -133,6 +133,14 @@ export class SkillLoader implements INodeType {
     const enableGithub = this.getNodeParameter('enableGithub', 0, false) as boolean;
     if (enableGithub) {
       const credentials = await this.getCredentials('githubSkillsApi');
+
+      if (!credentials.token) {
+        throw new NodeOperationError(
+          this.getNode(),
+          'GitHub credential token is required when "Load from GitHub" is enabled.',
+        );
+      }
+
       const owner =
         (this.getNodeParameter('githubOwner', 0, '') as string) ||
         (credentials.owner as string);
@@ -151,12 +159,18 @@ export class SkillLoader implements INodeType {
         cacheTtlSeconds: cacheTtl,
       });
 
-      const githubSkills =
-        selected.trim() === '*'
-          ? await loader.loadAll()
-          : await loader.loadSelected(selected.split(',').map((s) => s.trim()));
-
-      skills.push(...githubSkills);
+      try {
+        const githubSkills =
+          selected.trim() === '*'
+            ? await loader.loadAll()
+            : await loader.loadSelected(selected.split(',').map((s) => s.trim()));
+        skills.push(...githubSkills);
+      } catch (err) {
+        throw new NodeOperationError(
+          this.getNode(),
+          `GitHub skill loading failed: ${(err as Error).message}`,
+        );
+      }
     }
 
     // Attach skills to every item
