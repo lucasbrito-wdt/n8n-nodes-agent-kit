@@ -101,13 +101,7 @@ export class AgentKit implements INodeType {
     const items = this.getInputData();
     const results: INodeExecutionData[] = [];
 
-    const inputField = this.getNodeParameter('inputField', 0) as string;
-    const sessionIdField = this.getNodeParameter('sessionIdField', 0) as string;
-    const baseSystemPrompt = this.getNodeParameter('systemPrompt', 0) as string;
-    const modelOverride = this.getNodeParameter('modelOverride', 0, '') as string;
-    const maxIterations = this.getNodeParameter('maxIterations', 0, 10) as number;
-    const outputField = this.getNodeParameter('outputField', 0, 'response') as string;
-
+    // Credentials and sub-node connections are shared across all items
     const creds = await this.getCredentials('openRouterApi');
     const openai = new OpenAI({
       apiKey: creds.apiKey as string,
@@ -116,8 +110,6 @@ export class AgentKit implements INodeType {
         ? { 'X-Title': creds.httpReferer as string }
         : undefined,
     });
-    const model = modelOverride || (creds.model as string) || 'qwen/qwen3-235b-a22b';
-
     // Get memory sub-node (optional)
     let memory: IAgentMemory | null = null;
     try {
@@ -142,6 +134,15 @@ export class AgentKit implements INodeType {
 
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
+      // Read per-item to support expression-based property values
+      const inputField = this.getNodeParameter('inputField', i) as string;
+      const sessionIdField = this.getNodeParameter('sessionIdField', i) as string;
+      const baseSystemPrompt = this.getNodeParameter('systemPrompt', i) as string;
+      const modelOverride = this.getNodeParameter('modelOverride', i, '') as string;
+      const maxIterations = this.getNodeParameter('maxIterations', i, 10) as number;
+      const outputField = this.getNodeParameter('outputField', i, 'response') as string;
+      const model = modelOverride || (creds.model as string) || 'qwen/qwen3-235b-a22b';
+
       const userMessage = String(item.json[inputField] ?? '');
       const sessionId = String(item.json[sessionIdField] ?? `session-${i}`);
       const skills = (item.json.__skills__ ?? []) as Skill[];
@@ -210,11 +211,19 @@ export class AgentKit implements INodeType {
         break;
       }
 
+      if (!finalResponse) {
+        throw new NodeOperationError(
+          this.getNode(),
+          `Agent did not produce a response after ${maxIterations} iteration(s). The model may be stuck in a tool-calling loop.`,
+          { itemIndex: i },
+        );
+      }
+
       if (memory) memory.addMessage(sessionId, { role: 'assistant', content: finalResponse });
 
       // Remove internal __skills__ field from output
-      const { __skills__: _skills, ...cleanJson } = item.json as Record<string, unknown>;
-      void _skills;
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { __skills__: _unused, ...cleanJson } = item.json as Record<string, unknown>;
 
       results.push({
         json: { ...cleanJson, [outputField]: finalResponse } as INodeExecutionData['json'],
