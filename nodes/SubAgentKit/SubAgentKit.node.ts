@@ -175,7 +175,7 @@ export class SubAgentKit implements INodeType {
     try {
       const memData = await this.getInputConnectionData(NodeConnectionTypes.AiMemory, 0);
       if (Array.isArray(memData) && memData.length > 0) {
-        memory = (memData[0] as { response: IAgentMemory }).response ?? null;
+        memory = (memData[0] as IAgentMemory) ?? null;
       }
     } catch { /* no memory */ }
 
@@ -183,7 +183,7 @@ export class SubAgentKit implements INodeType {
     try {
       const toolData = await this.getInputConnectionData(NodeConnectionTypes.AiTool, 0);
       if (Array.isArray(toolData) && toolData.length > 0) {
-        tools = (toolData[0] as { response: McpTool[] }).response ?? [];
+        tools = (toolData as McpTool[][]).flat();
       }
     } catch { /* no tools */ }
 

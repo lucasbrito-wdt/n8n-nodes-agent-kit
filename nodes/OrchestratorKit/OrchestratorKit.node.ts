@@ -116,7 +116,7 @@ export class OrchestratorKit implements INodeType {
     try {
       const memData = await this.getInputConnectionData(NodeConnectionTypes.AiMemory, 0);
       if (Array.isArray(memData) && memData.length > 0) {
-        memory = (memData[0] as { response: IAgentMemory }).response ?? null;
+        memory = (memData[0] as IAgentMemory) ?? null;
       }
     } catch { /* no memory */ }
 
@@ -124,7 +124,7 @@ export class OrchestratorKit implements INodeType {
     try {
       const toolData = await this.getInputConnectionData(NodeConnectionTypes.AiTool, 0);
       if (Array.isArray(toolData) && toolData.length > 0) {
-        mcpTools = (toolData[0] as { response: McpTool[] }).response ?? [];
+        mcpTools = (toolData as McpTool[][]).flat();
       }
     } catch { /* no tools */ }
 
@@ -132,7 +132,7 @@ export class OrchestratorKit implements INodeType {
     try {
       const agentData = await this.getInputConnectionData(NodeConnectionTypes.AiAgent, 0);
       if (Array.isArray(agentData)) {
-        subAgents = agentData.map((d) => (d as { response: SubAgent }).response).filter(Boolean);
+        subAgents = (agentData as SubAgent[]).filter(Boolean);
       }
     } catch { /* no sub-agents */ }
 
