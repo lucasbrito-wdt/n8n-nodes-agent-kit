@@ -15,7 +15,15 @@ import type { SubAgent } from '../SubAgentKit/SubAgentKit.node';
 import { composeSystemPrompt } from '../../utils/skillParser';
 import type { Skill } from '../../utils/skillParser';
 
-function subAgentsToTools(subAgents: SubAgent[], sessionId: string): McpTool[] {
+interface TraceEntry {
+  step: number;
+  agent: string;
+  task: string;
+  response: string;
+  durationMs: number;
+}
+
+function subAgentsToTools(subAgents: SubAgent[], sessionId: string, trace: TraceEntry[]): McpTool[] {
   return subAgents.map((agent) => ({
     name: agent.name,
     description: agent.description,
@@ -24,8 +32,19 @@ function subAgentsToTools(subAgents: SubAgent[], sessionId: string): McpTool[] {
       properties: { task: { type: 'string', description: 'Task to delegate to this agent.' } },
       required: ['task'],
     },
-    call: async (args: Record<string, unknown>) =>
-      agent.call(String(args.task ?? ''), sessionId),
+    call: async (args: Record<string, unknown>) => {
+      const task = String(args.task ?? '');
+      const start = Date.now();
+      const response = await agent.call(task, sessionId);
+      trace.push({
+        step: trace.length + 1,
+        agent: agent.name,
+        task: task.length > 300 ? task.slice(0, 300) + '…' : task,
+        response: response.length > 500 ? response.slice(0, 500) + '…' : response,
+        durationMs: Date.now() - start,
+      });
+      return response;
+    },
   }));
 }
 
@@ -195,7 +214,8 @@ export class OrchestratorKit implements INodeType {
 
       if (memory) memory.addMessage(sessionId, { role: 'user', content: userMessage });
 
-      const agentTools = subAgentsToTools(subAgents, sessionId);
+      const executionTrace: TraceEntry[] = [];
+      const agentTools = subAgentsToTools(subAgents, sessionId, executionTrace);
       const allTools = [...agentTools, ...mcpTools];
 
       const loopResult = await runAgentLoop({
@@ -218,7 +238,12 @@ export class OrchestratorKit implements INodeType {
       if (memory) memory.addMessage(sessionId, { role: 'assistant', content: finalResponse });
 
       results.push({
-        json: { ...item.json, [outputField]: finalResponse, usage: { ...loopResult.usage, model } } as INodeExecutionData['json'],
+        json: {
+          ...item.json,
+          [outputField]: finalResponse,
+          executionTrace,
+          usage: { ...loopResult.usage, model },
+        } as INodeExecutionData['json'],
         pairedItem: { item: i },
       });
     }
