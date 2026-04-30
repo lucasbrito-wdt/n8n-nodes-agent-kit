@@ -11,7 +11,7 @@ import { runGuardrails } from '../AgentKit/guardrails/index';
 import type { GuardrailConfig } from '../AgentKit/guardrails/types';
 import type { IAgentMemory } from '../AgentMemory/AgentMemory.node';
 import type { McpTool } from '../McpGateway/McpGateway.node';
-import type { SubAgent } from '../SubAgentKit/SubAgentKit.node';
+import type { SubAgent, SubAgentUsage } from '../SubAgentKit/SubAgentKit.node';
 import { composeSystemPrompt } from '../../utils/skillParser';
 import type { Skill } from '../../utils/skillParser';
 
@@ -21,6 +21,7 @@ interface TraceEntry {
   task: string;
   response: string;
   durationMs: number;
+  usage: SubAgentUsage;
 }
 
 function subAgentsToTools(subAgents: SubAgent[], sessionId: string, trace: TraceEntry[]): McpTool[] {
@@ -35,15 +36,16 @@ function subAgentsToTools(subAgents: SubAgent[], sessionId: string, trace: Trace
     call: async (args: Record<string, unknown>) => {
       const task = String(args.task ?? '');
       const start = Date.now();
-      const response = await agent.call(task, sessionId);
+      const result = await agent.call(task, sessionId);
       trace.push({
         step: trace.length + 1,
         agent: agent.name,
         task: task.length > 300 ? task.slice(0, 300) + '…' : task,
-        response: response.length > 500 ? response.slice(0, 500) + '…' : response,
+        response: result.response.length > 500 ? result.response.slice(0, 500) + '…' : result.response,
         durationMs: Date.now() - start,
+        usage: result.usage,
       });
-      return response;
+      return result.response;
     },
   }));
 }
