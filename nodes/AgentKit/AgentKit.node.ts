@@ -220,6 +220,7 @@ export class AgentKit implements INodeType {
       const openaiTools = tools.length > 0 ? toolsToOpenAI(tools) : undefined;
       let finalResponse = '';
       let iteration = 0;
+      const usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
 
       while (iteration < Math.max(1, maxIterations)) {
         iteration++;
@@ -228,6 +229,12 @@ export class AgentKit implements INodeType {
           messages,
           ...(openaiTools ? { tools: openaiTools, tool_choice: 'auto' } : {}),
         });
+
+        if (response.usage) {
+          usage.prompt_tokens += response.usage.prompt_tokens;
+          usage.completion_tokens += response.usage.completion_tokens;
+          usage.total_tokens += response.usage.total_tokens;
+        }
 
         const choice = response.choices[0];
         if (!choice) break;
@@ -277,7 +284,11 @@ export class AgentKit implements INodeType {
       const { __skills__: _unused, ...cleanJson } = item.json as Record<string, unknown>;
 
       results.push({
-        json: { ...cleanJson, [outputField]: finalResponse } as INodeExecutionData['json'],
+        json: {
+          ...cleanJson,
+          [outputField]: finalResponse,
+          usage: { ...usage, iterations: iteration, model },
+        } as INodeExecutionData['json'],
         pairedItem: { item: i },
       });
     }
