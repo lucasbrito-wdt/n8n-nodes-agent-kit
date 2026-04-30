@@ -1,6 +1,6 @@
 {
   "name": "n8n-nodes-agent-kit",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "n8n node cluster: AgentKit, SkillLoader, AgentMemory, McpGateway",
   "license": "MIT",
   "keywords": [
