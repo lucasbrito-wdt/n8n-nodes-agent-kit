@@ -23,8 +23,14 @@ export interface IAgentMemory {
   search(query: string): Array<{ key: string; value: string }>;
 }
 
-// Session buffers live in-process (not persisted to SQLite)
+// Session buffers live in-process. Capped at MAX_SESSIONS to prevent unbounded growth.
+const MAX_SESSIONS = 1000;
 const sessionBuffers = new Map<string, ChatMessage[]>();
+
+function evictOldestSession(): void {
+  const oldest = sessionBuffers.keys().next().value;
+  if (oldest !== undefined) sessionBuffers.delete(oldest);
+}
 
 export class AgentMemory implements INodeType {
   description: INodeTypeDescription = {
@@ -71,10 +77,14 @@ export class AgentMemory implements INodeType {
       },
 
       addMessage(sessionId: string, message: ChatMessage): void {
+        const effectiveWindowSize = Math.max(1, windowSize);
         const buffer = sessionBuffers.get(sessionId) ?? [];
         buffer.push(message);
-        if (buffer.length > windowSize) {
-          buffer.splice(0, buffer.length - windowSize);
+        if (buffer.length > effectiveWindowSize) {
+          buffer.splice(0, buffer.length - effectiveWindowSize);
+        }
+        if (!sessionBuffers.has(sessionId) && sessionBuffers.size >= MAX_SESSIONS) {
+          evictOldestSession();
         }
         sessionBuffers.set(sessionId, buffer);
       },
