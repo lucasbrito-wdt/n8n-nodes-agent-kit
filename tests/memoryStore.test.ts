@@ -69,4 +69,15 @@ describe('MemoryStore', () => {
     const all = store.getAll();
     expect(all).toHaveLength(2);
   });
+
+  it('getAll excludes expired entries', () => {
+    jest.useFakeTimers();
+    store.set('live', 'yes');
+    store.set('expired', 'no', 1); // 1s TTL
+    jest.advanceTimersByTime(1500);
+    const all = store.getAll();
+    expect(all).toHaveLength(1);
+    expect(all[0].key).toBe('live');
+    jest.useRealTimers();
+  });
 });
