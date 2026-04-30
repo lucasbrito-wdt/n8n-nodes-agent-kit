@@ -14,10 +14,22 @@ import type { McpTool } from '../McpGateway/McpGateway.node';
 import { composeSystemPrompt } from '../../utils/skillParser';
 import type { Skill } from '../../utils/skillParser';
 
+export interface SubAgentUsage {
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  iterations: number;
+}
+
+export interface SubAgentResult {
+  response: string;
+  usage: SubAgentUsage;
+}
+
 export interface SubAgent {
   name: string;
   description: string;
-  call: (task: string, sessionId: string) => Promise<string>;
+  call: (task: string, sessionId: string) => Promise<SubAgentResult>;
 }
 
 export class SubAgentKit implements INodeType {
@@ -194,7 +206,7 @@ export class SubAgentKit implements INodeType {
       description: agentDescription,
       call: async (task: string, sessionId: string) => {
         const preBlock = await runGuardrails(task, guardrailConfigs, 'pre', openai, model);
-        if (preBlock !== null) return preBlock;
+        if (preBlock !== null) return { response: preBlock, usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, iterations: 0 } };
 
         const history = memory
           ? memory.getMessages(sessionId).map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content }))
@@ -223,7 +235,7 @@ export class SubAgentKit implements INodeType {
           sessionHistory.set(sessionId, h);
         }
 
-        return finalResponse;
+        return { response: finalResponse, usage: result.usage };
       },
     };
 
