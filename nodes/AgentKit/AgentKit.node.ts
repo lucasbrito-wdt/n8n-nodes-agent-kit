@@ -9,6 +9,8 @@ import OpenAI from 'openai';
 import type { IAgentMemory } from '../AgentMemory/AgentMemory.node';
 import type { McpTool } from '../McpGateway/McpGateway.node';
 import type { Skill } from '../../utils/skillParser';
+import { runGuardrails } from './guardrails/index';
+import type { GuardrailConfig } from './guardrails/types';
 
 function composeSystemPrompt(base: string, skills: Skill[]): string {
   if (skills.length === 0) return base;
@@ -355,12 +357,61 @@ export class AgentKit implements INodeType {
         ...loaderSkills,
       ];
 
+      const guardrailsRaw = this.getNodeParameter('guardrails', i, { guardrail: [] }) as {
+        guardrail: Array<{
+          name: string;
+          phase: string;
+          type: string;
+          fallbackResponse: string;
+          keywords?: string;
+          piiEntities?: string[];
+          secretKeysThreshold?: string;
+          allowedUrls?: string;
+          allowedSchemes?: string;
+          blockUserinfo?: boolean;
+          allowSubdomains?: boolean;
+          businessScope?: string;
+          pattern?: string;
+          prompt?: string;
+        }>;
+      };
+      const guardrailConfigs: GuardrailConfig[] = (guardrailsRaw.guardrail ?? []).map((g) => ({
+        name: g.name,
+        phase: g.phase as 'pre' | 'post',
+        type: g.type as GuardrailConfig['type'],
+        fallbackResponse: g.fallbackResponse,
+        keywords: g.keywords,
+        piiEntities: g.piiEntities,
+        secretKeysThreshold: g.secretKeysThreshold as GuardrailConfig['secretKeysThreshold'],
+        allowedUrls: g.allowedUrls,
+        allowedSchemes: g.allowedSchemes,
+        blockUserinfo: g.blockUserinfo,
+        allowSubdomains: g.allowSubdomains,
+        businessScope: g.businessScope,
+        pattern: g.pattern,
+        prompt: g.prompt,
+      }));
+
       if (!userMessage) {
         throw new NodeOperationError(
           this.getNode(),
           `Input field "${inputField}" is empty or missing.`,
           { itemIndex: i },
         );
+      }
+
+      const preBlock = await runGuardrails(userMessage, guardrailConfigs, 'pre', openai, model);
+      if (preBlock !== null) {
+        const { __skills__: _s, ...cleanJsonPre } = item.json as Record<string, unknown>;
+        results.push({
+          json: {
+            ...cleanJsonPre,
+            [outputField]: preBlock,
+            usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, iterations: 0, model },
+          } as INodeExecutionData['json'],
+          pairedItem: { item: i },
+        });
+        continue;
       }
 
       const systemPrompt = composeSystemPrompt(baseSystemPrompt, skills);
@@ -432,6 +483,11 @@ export class AgentKit implements INodeType {
           `Agent did not produce a response after ${maxIterations} iteration(s). The model may be stuck in a tool-calling loop.`,
           { itemIndex: i },
         );
+      }
+
+      const postBlock = await runGuardrails(finalResponse, guardrailConfigs, 'post', openai, model);
+      if (postBlock !== null) {
+        finalResponse = postBlock;
       }
 
       if (memory) memory.addMessage(sessionId, { role: 'assistant', content: finalResponse });
