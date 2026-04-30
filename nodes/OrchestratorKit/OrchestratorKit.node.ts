@@ -198,7 +198,10 @@ export class OrchestratorKit implements INodeType {
       const agentTools = subAgentsToTools(subAgents, sessionId);
       const allTools = [...agentTools, ...mcpTools];
 
-      const loopResult = await runAgentLoop({ openai, model, messages, tools: allTools, maxIterations });
+      const loopResult = await runAgentLoop({
+        openai, model, messages, tools: allTools, maxIterations,
+        forceToolUse: agentTools.length > 0,
+      });
       let finalResponse = loopResult.response;
 
       if (!finalResponse) {

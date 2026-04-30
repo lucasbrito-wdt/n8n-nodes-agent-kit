@@ -1,10 +1,12 @@
 import type {
+  IExecuteFunctions,
+  INodeExecutionData,
   INodeType,
   INodeTypeDescription,
   ISupplyDataFunctions,
   SupplyData,
 } from 'n8n-workflow';
-import { NodeConnectionTypes } from 'n8n-workflow';
+import { NodeConnectionTypes, NodeOperationError } from 'n8n-workflow';
 import OpenAI from 'openai';
 import { runAgentLoop } from '../../utils/subAgentRunner';
 import { runGuardrails } from '../AgentKit/guardrails/index';
@@ -20,6 +22,89 @@ export interface SubAgent {
   call: (task: string, sessionId: string) => Promise<string>;
 }
 
+const guardrailProperties = [
+  {
+    displayName: 'Guardrails',
+    name: 'guardrails',
+    type: 'fixedCollection' as const,
+    typeOptions: { multipleValues: true },
+    default: {},
+    description: 'Content guardrails evaluated before (pre) or after (post) the LLM loop.',
+    options: [
+      {
+        name: 'guardrail',
+        displayName: 'Guardrail',
+        values: [
+          { displayName: 'Name', name: 'name', type: 'string' as const, default: '' },
+          {
+            displayName: 'Phase', name: 'phase', type: 'options' as const,
+            options: [
+              { name: 'Pre (validate input)', value: 'pre' },
+              { name: 'Post (validate output)', value: 'post' },
+            ],
+            default: 'pre',
+          },
+          {
+            displayName: 'Check Type', name: 'type', type: 'options' as const,
+            options: [
+              { name: 'Keywords', value: 'keywords' },
+              { name: 'PII Detection', value: 'pii' },
+              { name: 'Secret Keys', value: 'secretKeys' },
+              { name: 'Custom Regex', value: 'customRegex' },
+              { name: 'Jailbreak Detection', value: 'jailbreak' },
+              { name: 'NSFW Content', value: 'nsfw' },
+              { name: 'Custom Model Prompt', value: 'customModel' },
+            ],
+            default: 'keywords',
+          },
+          {
+            displayName: 'Fallback Response', name: 'fallbackResponse', type: 'string' as const,
+            default: 'I cannot respond to that.',
+          },
+          {
+            displayName: 'Keywords', name: 'keywords', type: 'string' as const, default: '',
+            displayOptions: { show: { type: ['keywords'] } },
+          },
+          {
+            displayName: 'Pattern', name: 'pattern', type: 'string' as const, default: '',
+            displayOptions: { show: { type: ['customRegex'] } },
+          },
+          {
+            displayName: 'Evaluation Prompt', name: 'prompt', type: 'string' as const,
+            typeOptions: { rows: 4 }, default: '',
+            displayOptions: { show: { type: ['customModel'] } },
+          },
+        ],
+      },
+    ],
+  },
+];
+
+type RawGuardrail = {
+  name: string; phase: string; type: string; fallbackResponse: string;
+  keywords?: string; pattern?: string; prompt?: string;
+};
+
+function parseGuardrails(raw: { guardrail: RawGuardrail[] }): GuardrailConfig[] {
+  return (raw.guardrail ?? []).map((g) => ({
+    name: g.name,
+    phase: g.phase as 'pre' | 'post',
+    type: g.type as GuardrailConfig['type'],
+    fallbackResponse: g.fallbackResponse,
+    keywords: g.keywords,
+    pattern: g.pattern,
+    prompt: g.prompt,
+  }));
+}
+
+function buildOpenAI(creds: Record<string, unknown>): OpenAI {
+  return new OpenAI({
+    apiKey: creds.apiKey as string,
+    baseURL: (creds.baseUrl as string) || 'https://openrouter.ai/api/v1',
+    defaultHeaders: creds.httpReferer ? { 'X-Title': creds.httpReferer as string } : undefined,
+  });
+}
+
 export class SubAgentKit implements INodeType {
   description: INodeTypeDescription = {
     displayName: 'Sub Agent Kit',
@@ -27,7 +112,7 @@ export class SubAgentKit implements INodeType {
     icon: 'fa:robot',
     group: ['transform'],
     version: 1,
-    description: 'A specialized agent that can be connected to an OrchestratorKit as a sub-agent.',
+    description: 'A specialized agent. Connect to OrchestratorKit via AiAgent, or run standalone via Main.',
     defaults: { name: 'Sub Agent Kit' },
     inputs: [
       { type: NodeConnectionTypes.AiMemory, required: false },
@@ -38,6 +123,7 @@ export class SubAgentKit implements INodeType {
     outputNames: ['agent'],
     credentials: [{ name: 'openRouterApi', required: true }],
     properties: [
+      // ── Orchestrator identity ──────────────────────────────────────────────
       {
         displayName: 'Agent Name',
         name: 'agentName',
@@ -52,6 +138,29 @@ export class SubAgentKit implements INodeType {
         default: 'A specialized agent.',
         description: 'Shown to the orchestrator LLM to decide when to delegate to this agent.',
       },
+      // ── Standalone execution ───────────────────────────────────────────────
+      {
+        displayName: 'Input Message Field',
+        name: 'inputField',
+        type: 'string',
+        default: 'message',
+        description: 'Field in the input JSON that contains the user message (standalone mode).',
+      },
+      {
+        displayName: 'Session ID Field',
+        name: 'sessionIdField',
+        type: 'string',
+        default: 'sessionId',
+        description: 'Field in the input JSON used to identify the session for memory (standalone mode).',
+      },
+      {
+        displayName: 'Output Field',
+        name: 'outputField',
+        type: 'string',
+        default: 'response',
+        description: 'Field name in the output JSON for the agent response (standalone mode).',
+      },
+      // ── Shared ────────────────────────────────────────────────────────────
       {
         displayName: 'System Prompt',
         name: 'systemPrompt',
@@ -78,6 +187,7 @@ export class SubAgentKit implements INodeType {
         type: 'fixedCollection',
         typeOptions: { multipleValues: true },
         default: {},
+        description: 'Skills defined inline. Skills from a connected Skill Loader node are merged and take precedence.',
         options: [
           {
             name: 'skill',
@@ -90,54 +200,135 @@ export class SubAgentKit implements INodeType {
           },
         ],
       },
-      {
-        displayName: 'Guardrails',
-        name: 'guardrails',
-        type: 'fixedCollection',
-        typeOptions: { multipleValues: true },
-        default: {},
-        options: [
-          {
-            name: 'guardrail',
-            displayName: 'Guardrail',
-            values: [
-              { displayName: 'Name', name: 'name', type: 'string', default: '' },
-              {
-                displayName: 'Phase', name: 'phase', type: 'options',
-                options: [{ name: 'Pre (validate input)', value: 'pre' }, { name: 'Post (validate output)', value: 'post' }],
-                default: 'pre',
-              },
-              {
-                displayName: 'Check Type', name: 'type', type: 'options',
-                options: [
-                  { name: 'Keywords', value: 'keywords' },
-                  { name: 'PII Detection', value: 'pii' },
-                  { name: 'Secret Keys', value: 'secretKeys' },
-                  { name: 'Custom Regex', value: 'customRegex' },
-                  { name: 'Jailbreak Detection', value: 'jailbreak' },
-                  { name: 'NSFW Content', value: 'nsfw' },
-                  { name: 'Custom Model Prompt', value: 'customModel' },
-                ],
-                default: 'keywords',
-              },
-              { displayName: 'Fallback Response', name: 'fallbackResponse', type: 'string', default: 'I cannot respond to that.' },
-              { displayName: 'Keywords', name: 'keywords', type: 'string', default: '', displayOptions: { show: { type: ['keywords'] } } },
-              { displayName: 'Pattern', name: 'pattern', type: 'string', default: '', displayOptions: { show: { type: ['customRegex'] } } },
-              { displayName: 'Evaluation Prompt', name: 'prompt', type: 'string', typeOptions: { rows: 4 }, default: '', displayOptions: { show: { type: ['customModel'] } } },
-            ],
-          },
-        ],
-      },
+      ...guardrailProperties,
     ],
   };
 
+  // ── Standalone execution ─────────────────────────────────────────────────
+
+  async execute(this: IExecuteFunctions): Promise<INodeExecutionData[][]> {
+    const items = this.getInputData();
+    const results: INodeExecutionData[] = [];
+
+    const creds = await this.getCredentials('openRouterApi');
+    const openai = buildOpenAI(creds as Record<string, unknown>);
+
+    let memory: IAgentMemory | null = null;
+    try {
+      const memData = await this.getInputConnectionData(NodeConnectionTypes.AiMemory, 0);
+      if (Array.isArray(memData) && memData.length > 0) {
+        memory = (memData[0] as { response: IAgentMemory }).response ?? null;
+      }
+    } catch { /* no memory */ }
+
+    let tools: McpTool[] = [];
+    try {
+      const toolData = await this.getInputConnectionData(NodeConnectionTypes.AiTool, 0);
+      if (Array.isArray(toolData) && toolData.length > 0) {
+        tools = (toolData[0] as { response: McpTool[] }).response ?? [];
+      }
+    } catch { /* no tools */ }
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+
+      const inputField = this.getNodeParameter('inputField', i) as string;
+      const sessionIdField = this.getNodeParameter('sessionIdField', i) as string;
+      const baseSystemPrompt = this.getNodeParameter('systemPrompt', i) as string;
+      const modelOverride = this.getNodeParameter('modelOverride', i, '') as string;
+      const maxIterations = this.getNodeParameter('maxIterations', i, 10) as number;
+      const outputField = this.getNodeParameter('outputField', i, 'response') as string;
+      const model = modelOverride || (creds.model as string) || 'qwen/qwen3-235b-a22b';
+
+      const userMessage = String(item.json[inputField] ?? '');
+      const sessionId = String(item.json[sessionIdField] ?? `session-${i}`);
+
+      if (!userMessage) {
+        throw new NodeOperationError(
+          this.getNode(),
+          `Input field "${inputField}" is empty or missing.`,
+          { itemIndex: i },
+        );
+      }
+
+      const inlineSkillsRaw = this.getNodeParameter('inlineSkills', i, { skill: [] }) as {
+        skill: Array<{ name: string; description: string; content: string }>;
+      };
+      const inlineSkills: Skill[] = (inlineSkillsRaw.skill ?? [])
+        .filter((s) => s.name)
+        .map((s) => ({ name: s.name, description: s.description, content: s.content, tags: [] }));
+
+      const loaderSkills = (item.json.__skills__ ?? []) as Skill[];
+      const loaderNames = new Set(loaderSkills.map((s) => s.name));
+      const skills: Skill[] = [
+        ...inlineSkills.filter((s) => !loaderNames.has(s.name)),
+        ...loaderSkills,
+      ];
+
+      const guardrailsRaw = this.getNodeParameter('guardrails', i, { guardrail: [] }) as { guardrail: RawGuardrail[] };
+      const guardrailConfigs = parseGuardrails(guardrailsRaw);
+
+      const preBlock = await runGuardrails(userMessage, guardrailConfigs, 'pre', openai, model);
+      if (preBlock !== null) {
+        const { __skills__: _s, ...cleanJson } = item.json as Record<string, unknown>;
+        results.push({
+          json: {
+            ...cleanJson,
+            [outputField]: preBlock,
+            usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, iterations: 0, model },
+          } as INodeExecutionData['json'],
+          pairedItem: { item: i },
+        });
+        continue;
+      }
+
+      const systemPrompt = composeSystemPrompt(baseSystemPrompt, skills);
+
+      const history = memory ? memory.getMessages(sessionId) : [];
+      const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
+        { role: 'system', content: systemPrompt },
+        ...history.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
+        { role: 'user', content: userMessage },
+      ];
+
+      if (memory) memory.addMessage(sessionId, { role: 'user', content: userMessage });
+
+      const loopResult = await runAgentLoop({ openai, model, messages, tools, maxIterations });
+      let finalResponse = loopResult.response;
+      const usage = loopResult.usage;
+
+      if (!finalResponse) {
+        throw new NodeOperationError(
+          this.getNode(),
+          `Agent did not produce a response after ${maxIterations} iteration(s).`,
+          { itemIndex: i },
+        );
+      }
+
+      const postBlock = await runGuardrails(finalResponse, guardrailConfigs, 'post', openai, model);
+      if (postBlock !== null) finalResponse = postBlock;
+
+      if (memory) memory.addMessage(sessionId, { role: 'assistant', content: finalResponse });
+
+      const { __skills__: _unused, ...cleanJson } = item.json as Record<string, unknown>;
+      results.push({
+        json: {
+          ...cleanJson,
+          [outputField]: finalResponse,
+          usage: { ...usage, model },
+        } as INodeExecutionData['json'],
+        pairedItem: { item: i },
+      });
+    }
+
+    return [results];
+  }
+
+  // ── Supply to OrchestratorKit ────────────────────────────────────────────
+
   async supplyData(this: ISupplyDataFunctions): Promise<SupplyData> {
     const creds = await this.getCredentials('openRouterApi');
-    const openai = new OpenAI({
-      apiKey: creds.apiKey as string,
-      baseURL: (creds.baseUrl as string) || 'https://openrouter.ai/api/v1',
-      defaultHeaders: creds.httpReferer ? { 'X-Title': creds.httpReferer as string } : undefined,
-    });
+    const openai = buildOpenAI(creds as Record<string, unknown>);
 
     const agentName = this.getNodeParameter('agentName', 0) as string;
     const agentDescription = this.getNodeParameter('agentDescription', 0) as string;
@@ -155,21 +346,8 @@ export class SubAgentKit implements INodeType {
 
     const systemPrompt = composeSystemPrompt(baseSystemPrompt, skills);
 
-    const guardrailsRaw = this.getNodeParameter('guardrails', 0, { guardrail: [] }) as {
-      guardrail: Array<{
-        name: string; phase: string; type: string; fallbackResponse: string;
-        keywords?: string; pattern?: string; prompt?: string;
-      }>;
-    };
-    const guardrailConfigs: GuardrailConfig[] = (guardrailsRaw.guardrail ?? []).map((g) => ({
-      name: g.name,
-      phase: g.phase as 'pre' | 'post',
-      type: g.type as GuardrailConfig['type'],
-      fallbackResponse: g.fallbackResponse,
-      keywords: g.keywords,
-      pattern: g.pattern,
-      prompt: g.prompt,
-    }));
+    const guardrailsRaw = this.getNodeParameter('guardrails', 0, { guardrail: [] }) as { guardrail: RawGuardrail[] };
+    const guardrailConfigs = parseGuardrails(guardrailsRaw);
 
     let memory: IAgentMemory | null = null;
     try {

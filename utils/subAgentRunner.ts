@@ -7,6 +7,7 @@ export interface AgentLoopParams {
   messages: OpenAI.Chat.ChatCompletionMessageParam[];
   tools: McpTool[];
   maxIterations: number;
+  forceToolUse?: boolean;
 }
 
 export interface AgentLoopResult {
@@ -22,7 +23,7 @@ function toolsToOpenAI(tools: McpTool[]): OpenAI.Chat.ChatCompletionTool[] {
 }
 
 export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopResult> {
-  const { openai, model, tools, maxIterations } = params;
+  const { openai, model, tools, maxIterations, forceToolUse = false } = params;
   const messages = [...params.messages];
   const openaiTools = tools.length > 0 ? toolsToOpenAI(tools) : undefined;
   const usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, iterations: 0 };
@@ -30,9 +31,13 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
 
   while (usage.iterations < Math.max(1, maxIterations)) {
     usage.iterations++;
+    const isFirstIteration = usage.iterations === 1;
+    const toolChoice = openaiTools
+      ? (forceToolUse && isFirstIteration ? 'required' : 'auto')
+      : undefined;
     const response = await openai.chat.completions.create({
       model, messages,
-      ...(openaiTools ? { tools: openaiTools, tool_choice: 'auto' } : {}),
+      ...(openaiTools ? { tools: openaiTools, tool_choice: toolChoice } : {}),
     });
 
     if (response.usage) {
