@@ -9,6 +9,8 @@ import OpenAI from 'openai';
 import { runAgentLoop } from '../../utils/subAgentRunner';
 import { runGuardrails } from '../AgentKit/guardrails/index';
 import type { GuardrailConfig } from '../AgentKit/guardrails/types';
+import type { IAgentMemory } from '../AgentMemory/AgentMemory.node';
+import type { McpTool } from '../McpGateway/McpGateway.node';
 import { composeSystemPrompt } from '../../utils/skillParser';
 import type { Skill } from '../../utils/skillParser';
 
@@ -27,7 +29,11 @@ export class SubAgentKit implements INodeType {
     version: 1,
     description: 'A specialized agent that can be connected to an OrchestratorKit as a sub-agent.',
     defaults: { name: 'Sub Agent Kit' },
-    inputs: [],
+    inputs: [
+      { type: NodeConnectionTypes.AiMemory, required: false },
+      { type: NodeConnectionTypes.AiTool, required: false },
+    ],
+    inputNames: ['memory', 'tools'],
     outputs: [NodeConnectionTypes.AiAgent],
     outputNames: ['agent'],
     credentials: [{ name: 'openRouterApi', required: true }],
@@ -165,6 +171,22 @@ export class SubAgentKit implements INodeType {
       prompt: g.prompt,
     }));
 
+    let memory: IAgentMemory | null = null;
+    try {
+      const memData = await this.getInputConnectionData(NodeConnectionTypes.AiMemory, 0);
+      if (Array.isArray(memData) && memData.length > 0) {
+        memory = (memData[0] as { response: IAgentMemory }).response ?? null;
+      }
+    } catch { /* no memory */ }
+
+    let tools: McpTool[] = [];
+    try {
+      const toolData = await this.getInputConnectionData(NodeConnectionTypes.AiTool, 0);
+      if (Array.isArray(toolData) && toolData.length > 0) {
+        tools = (toolData[0] as { response: McpTool[] }).response ?? [];
+      }
+    } catch { /* no tools */ }
+
     const sessionHistory = new Map<string, Array<{ role: 'user' | 'assistant'; content: string }>>();
 
     const subAgent: SubAgent = {
@@ -174,22 +196,32 @@ export class SubAgentKit implements INodeType {
         const preBlock = await runGuardrails(task, guardrailConfigs, 'pre', openai, model);
         if (preBlock !== null) return preBlock;
 
-        const history = sessionHistory.get(sessionId) ?? [];
+        const history = memory
+          ? memory.getMessages(sessionId).map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content }))
+          : (sessionHistory.get(sessionId) ?? []);
+
         const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
           { role: 'system', content: systemPrompt },
           ...history,
           { role: 'user', content: task },
         ];
 
-        const result = await runAgentLoop({ openai, model, messages, tools: [], maxIterations });
+        if (memory) memory.addMessage(sessionId, { role: 'user', content: task });
+
+        const result = await runAgentLoop({ openai, model, messages, tools, maxIterations });
         const response = result.response || 'No response generated.';
 
         const postBlock = await runGuardrails(response, guardrailConfigs, 'post', openai, model);
         const finalResponse = postBlock ?? response;
 
-        history.push({ role: 'user', content: task });
-        history.push({ role: 'assistant', content: finalResponse });
-        sessionHistory.set(sessionId, history);
+        if (memory) {
+          memory.addMessage(sessionId, { role: 'assistant', content: finalResponse });
+        } else {
+          const h = sessionHistory.get(sessionId) ?? [];
+          h.push({ role: 'user', content: task });
+          h.push({ role: 'assistant', content: finalResponse });
+          sessionHistory.set(sessionId, h);
+        }
 
         return finalResponse;
       },
