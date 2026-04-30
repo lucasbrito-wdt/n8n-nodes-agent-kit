@@ -11,8 +11,8 @@ export interface Skill {
 export function parseSkill(raw: string): Skill {
   const { data, content } = matter(raw);
 
-  if (!data.name) throw new Error('Skill missing required field: name');
-  if (!data.description) throw new Error('Skill missing required field: description');
+  if (data.name == null) throw new Error('Skill missing required field: name');
+  if (data.description == null) throw new Error('Skill missing required field: description');
 
   return {
     name: String(data.name),
