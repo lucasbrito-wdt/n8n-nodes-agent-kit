@@ -15,8 +15,6 @@ import type { SubAgent } from '../SubAgentKit/SubAgentKit.node';
 import { composeSystemPrompt } from '../../utils/skillParser';
 import type { Skill } from '../../utils/skillParser';
 
-const AI_AGENT_CONNECTION = 'AiAgent' as any;
-
 function subAgentsToTools(subAgents: SubAgent[], sessionId: string): McpTool[] {
   return subAgents.map((agent) => ({
     name: agent.name,
@@ -44,7 +42,7 @@ export class OrchestratorKit implements INodeType {
       NodeConnectionTypes.Main,
       { type: NodeConnectionTypes.AiMemory, required: false },
       { type: NodeConnectionTypes.AiTool, required: false },
-      { type: AI_AGENT_CONNECTION, required: false },
+      { type: NodeConnectionTypes.AiAgent, required: false },
     ],
     inputNames: ['input', 'memory', 'tools', 'agents'],
     outputs: [NodeConnectionTypes.Main],
@@ -132,7 +130,7 @@ export class OrchestratorKit implements INodeType {
 
     let subAgents: SubAgent[] = [];
     try {
-      const agentData = await this.getInputConnectionData(AI_AGENT_CONNECTION, 0);
+      const agentData = await this.getInputConnectionData(NodeConnectionTypes.AiAgent, 0);
       if (Array.isArray(agentData)) {
         subAgents = agentData.map((d) => (d as { response: SubAgent }).response).filter(Boolean);
       }

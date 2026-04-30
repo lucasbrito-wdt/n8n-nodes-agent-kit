@@ -4,6 +4,7 @@ import type {
   ISupplyDataFunctions,
   SupplyData,
 } from 'n8n-workflow';
+import { NodeConnectionTypes } from 'n8n-workflow';
 import OpenAI from 'openai';
 import { runAgentLoop } from '../../utils/subAgentRunner';
 import { runGuardrails } from '../AgentKit/guardrails/index';
@@ -27,7 +28,7 @@ export class SubAgentKit implements INodeType {
     description: 'A specialized agent that can be connected to an OrchestratorKit as a sub-agent.',
     defaults: { name: 'Sub Agent Kit' },
     inputs: [],
-    outputs: [{ type: 'AiAgent' as any }],
+    outputs: [NodeConnectionTypes.AiAgent],
     outputNames: ['agent'],
     credentials: [{ name: 'openRouterApi', required: true }],
     properties: [
