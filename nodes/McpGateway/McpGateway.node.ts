@@ -182,9 +182,22 @@ export class McpGateway implements INodeType {
         }),
       });
 
-      await client.connect(transport);
+      try {
+        await client.connect(transport);
+      } catch (err) {
+        throw new Error(
+          `McpGateway: failed to connect to MCP server at "${serverUrl}": ${(err as Error).message}`,
+        );
+      }
 
-      const { tools: mcpTools } = await client.listTools();
+      let mcpTools: Awaited<ReturnType<typeof client.listTools>>['tools'];
+      try {
+        ({ tools: mcpTools } = await client.listTools());
+      } catch (err) {
+        throw new Error(
+          `McpGateway: failed to list tools from "${serverUrl}": ${(err as Error).message}`,
+        );
+      }
 
       for (const tool of mcpTools) {
         const include =
