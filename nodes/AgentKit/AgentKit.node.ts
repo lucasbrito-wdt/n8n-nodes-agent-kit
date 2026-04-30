@@ -94,6 +94,43 @@ export class AgentKit implements INodeType {
         default: 'response',
         description: 'Field name in the output JSON for the agent response.',
       },
+      {
+        displayName: 'Inline Skills',
+        name: 'inlineSkills',
+        type: 'fixedCollection',
+        typeOptions: { multipleValues: true },
+        default: {},
+        description: 'Skills defined inline. Skills from a connected Skill Loader node are merged and take precedence.',
+        options: [
+          {
+            name: 'skill',
+            displayName: 'Skill',
+            values: [
+              {
+                displayName: 'Name',
+                name: 'name',
+                type: 'string',
+                default: '',
+                description: 'Skill name (e.g. summarize_text)',
+              },
+              {
+                displayName: 'Description',
+                name: 'description',
+                type: 'string',
+                default: '',
+              },
+              {
+                displayName: 'Content',
+                name: 'content',
+                type: 'string',
+                typeOptions: { rows: 6 },
+                default: '',
+                description: 'Skill instructions injected into the system prompt.',
+              },
+            ],
+          },
+        ],
+      },
     ],
   };
 
@@ -145,7 +182,21 @@ export class AgentKit implements INodeType {
 
       const userMessage = String(item.json[inputField] ?? '');
       const sessionId = String(item.json[sessionIdField] ?? `session-${i}`);
-      const skills = (item.json.__skills__ ?? []) as Skill[];
+
+      const inlineSkillsRaw = this.getNodeParameter('inlineSkills', i, { skill: [] }) as {
+        skill: Array<{ name: string; description: string; content: string }>;
+      };
+      const inlineSkills: Skill[] = (inlineSkillsRaw.skill ?? [])
+        .filter((s) => s.name)
+        .map((s) => ({ name: s.name, description: s.description, content: s.content, tags: [] }));
+
+      const loaderSkills = (item.json.__skills__ ?? []) as Skill[];
+      // Loader skills override inline skills with the same name
+      const loaderNames = new Set(loaderSkills.map((s) => s.name));
+      const skills: Skill[] = [
+        ...inlineSkills.filter((s) => !loaderNames.has(s.name)),
+        ...loaderSkills,
+      ];
 
       if (!userMessage) {
         throw new NodeOperationError(
