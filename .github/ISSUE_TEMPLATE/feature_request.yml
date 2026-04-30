@@ -1,0 +1,61 @@
+name: 💡 Feature Request
+description: Suggest a new node, capability, or improvement.
+title: "[Feat]: "
+labels: ["enhancement", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Got an idea? Drop it here. We read every one.
+
+  - type: checkboxes
+    id: prereqs
+    attributes:
+      label: Pre-flight checks
+      options:
+        - label: I searched existing issues / discussions and this isn't already proposed.
+          required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Tell us the pain. "I want X" is fine, but "I keep hitting Y" is better.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: How would you like it to work? UI shape, API, config, anything.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What else did you try or think about? Why didn't they work?
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Scope
+      options:
+        - New node
+        - Enhancement to existing node
+        - New credential
+        - Tooling / DX
+        - Docs
+        - Other
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Are you willing to contribute?
+      options:
+        - label: I'd like to work on this myself (with guidance if needed).
+        - label: I can help test it once implemented.

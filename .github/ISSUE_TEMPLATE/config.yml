@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 💬 Discussions
+    url: https://github.com/lucasbrito-wdt/n8n-nodes-agent-kit/discussions
+    about: Questions, ideas, show & tell — anything that isn't a bug or concrete feature ask.
+  - name: 📖 n8n Community
+    url: https://community.n8n.io
+    about: For general n8n questions not specific to Agent Kit.

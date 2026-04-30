@@ -1,0 +1,102 @@
+name: 🐛 Bug Report
+description: Something is broken or behaving unexpectedly.
+title: "[Bug]: "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug! The more detail, the faster the fix.
+
+  - type: checkboxes
+    id: prereqs
+    attributes:
+      label: Pre-flight checks
+      options:
+        - label: I searched existing issues and didn't find a duplicate.
+          required: true
+        - label: I'm on the latest version of `n8n-nodes-agent-kit`.
+          required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Agent Kit version
+      placeholder: "0.1.15"
+    validations:
+      required: true
+
+  - type: input
+    id: n8n-version
+    attributes:
+      label: n8n version
+      placeholder: "1.x.x"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: node
+    attributes:
+      label: Which node?
+      multiple: true
+      options:
+        - Agent Kit
+        - Orchestrator Kit
+        - Sub Agent Kit
+        - Agent Memory
+        - MCP Gateway
+        - Skill Loader
+        - Not sure / multiple
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug.
+      placeholder: When I do X, Y happens. I expected Z.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Minimal repro. A workflow JSON export is gold.
+      placeholder: |
+        1. Create a workflow with ...
+        2. Wire ... to ...
+        3. Execute with input ...
+        4. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / error output
+      description: Paste any relevant error messages or n8n execution logs.
+      render: shell
+
+  - type: input
+    id: model
+    attributes:
+      label: LLM / model in use
+      placeholder: "anthropic/claude-sonnet-4-5 via OpenRouter"
+
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment
+      placeholder: |
+        - OS:
+        - Node version:
+        - n8n install type (Docker / npm / desktop):
