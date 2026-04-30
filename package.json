@@ -3,8 +3,12 @@
   "version": "0.1.0",
   "description": "n8n node cluster: AgentKit, SkillLoader, AgentMemory, McpGateway",
   "license": "MIT",
-  "keywords": ["n8n-community-node-package"],
-  "author": { "name": "lucasbrito" },
+  "keywords": [
+    "n8n-community-node-package"
+  ],
+  "author": {
+    "name": "lucasbrito"
+  },
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc --project tsconfig.json",
@@ -12,7 +16,9 @@
     "test": "jest",
     "lint": "eslint nodes credentials utils --ext .ts"
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "n8n": {
     "n8nNodesApiVersion": 2,
     "credentials": [
@@ -27,22 +33,21 @@
     ]
   },
   "dependencies": {
-    "gray-matter": "^4.0.3",
-    "better-sqlite3": "^9.4.3",
     "@modelcontextprotocol/sdk": "^1.9.0",
-    "openai": "^4.77.0",
-    "@langchain/core": "^0.3.0"
+    "better-sqlite3": "^9.4.3",
+    "gray-matter": "^4.0.3",
+    "openai": "^4.77.0"
   },
   "peerDependencies": {
     "n8n-workflow": ">=1.0.0"
   },
   "devDependencies": {
-    "typescript": "^5.4.0",
-    "@types/node": "^20.0.0",
     "@types/better-sqlite3": "^7.6.0",
-    "jest": "^29.0.0",
-    "ts-jest": "^29.0.0",
     "@types/jest": "^29.0.0",
-    "n8n-workflow": "^1.0.0"
+    "@types/node": "^20.0.0",
+    "jest": "^29.0.0",
+    "n8n-workflow": "^1.0.0",
+    "ts-jest": "^29.0.0",
+    "typescript": "^5.4.0"
   }
 }
