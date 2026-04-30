@@ -8,28 +8,12 @@ import { NodeConnectionTypes, NodeOperationError } from 'n8n-workflow';
 import OpenAI from 'openai';
 import type { IAgentMemory } from '../AgentMemory/AgentMemory.node';
 import type { McpTool } from '../McpGateway/McpGateway.node';
+import { composeSystemPrompt } from '../../utils/skillParser';
 import type { Skill } from '../../utils/skillParser';
+import { runAgentLoop } from '../../utils/subAgentRunner';
 import { runGuardrails } from './guardrails/index';
 import type { GuardrailConfig } from './guardrails/types';
 
-function composeSystemPrompt(base: string, skills: Skill[]): string {
-  if (skills.length === 0) return base;
-  const skillsBlock = skills
-    .map((s) => `## Skill: ${s.name}\n${s.content}`)
-    .join('\n\n');
-  return `${base}\n\n---\n\n${skillsBlock}`;
-}
-
-function toolsToOpenAI(tools: McpTool[]): OpenAI.Chat.ChatCompletionTool[] {
-  return tools.map((t) => ({
-    type: 'function' as const,
-    function: {
-      name: t.name,
-      description: t.description,
-      parameters: t.inputSchema as Record<string, unknown>,
-    },
-  }));
-}
 
 export class AgentKit implements INodeType {
   description: INodeTypeDescription = {
@@ -425,57 +409,9 @@ export class AgentKit implements INodeType {
 
       if (memory) memory.addMessage(sessionId, { role: 'user', content: userMessage });
 
-      const openaiTools = tools.length > 0 ? toolsToOpenAI(tools) : undefined;
-      let finalResponse = '';
-      let iteration = 0;
-      const usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
-
-      while (iteration < Math.max(1, maxIterations)) {
-        iteration++;
-        const response = await openai.chat.completions.create({
-          model,
-          messages,
-          ...(openaiTools ? { tools: openaiTools, tool_choice: 'auto' } : {}),
-        });
-
-        if (response.usage) {
-          usage.prompt_tokens += response.usage.prompt_tokens;
-          usage.completion_tokens += response.usage.completion_tokens;
-          usage.total_tokens += response.usage.total_tokens;
-        }
-
-        const choice = response.choices[0];
-        if (!choice) break;
-
-        const assistantMsg = choice.message;
-        messages.push(assistantMsg);
-
-        if (choice.finish_reason === 'tool_calls' && assistantMsg.tool_calls) {
-          for (const toolCall of assistantMsg.tool_calls) {
-            if (toolCall.type !== 'function') continue;
-            const fnCall = toolCall as OpenAI.Chat.ChatCompletionMessageToolCall & {
-              function: { name: string; arguments: string };
-            };
-            const tool = tools.find((t) => t.name === fnCall.function.name);
-            let toolResult: string;
-            try {
-              const args = JSON.parse(fnCall.function.arguments || '{}') as Record<string, unknown>;
-              toolResult = tool ? await tool.call(args) : `Tool "${fnCall.function.name}" not found`;
-            } catch (err) {
-              toolResult = `Error: ${(err as Error).message}`;
-            }
-            messages.push({
-              role: 'tool',
-              tool_call_id: toolCall.id,
-              content: toolResult,
-            });
-          }
-          continue;
-        }
-
-        finalResponse = assistantMsg.content ?? '';
-        break;
-      }
+      const loopResult = await runAgentLoop({ openai, model, messages, tools, maxIterations });
+      let finalResponse = loopResult.response;
+      const usage = loopResult.usage;
 
       if (!finalResponse) {
         throw new NodeOperationError(
@@ -500,7 +436,7 @@ export class AgentKit implements INodeType {
         json: {
           ...cleanJson,
           [outputField]: finalResponse,
-          usage: { ...usage, iterations: iteration, model },
+          usage: { ...usage, model },
         } as INodeExecutionData['json'],
         pairedItem: { item: i },
       });
