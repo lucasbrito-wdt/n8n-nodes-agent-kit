@@ -152,7 +152,7 @@ export class AgentKit implements INodeType {
     try {
       const memoryData = await this.getInputConnectionData(NodeConnectionTypes.AiMemory, 0);
       if (Array.isArray(memoryData) && memoryData.length > 0) {
-        memory = (memoryData[0] as { response: IAgentMemory }).response;
+        memory = (memoryData[0] as { response: IAgentMemory }).response ?? null;
       }
     } catch {
       // no memory connected — ok
@@ -163,7 +163,7 @@ export class AgentKit implements INodeType {
     try {
       const toolData = await this.getInputConnectionData(NodeConnectionTypes.AiTool, 0);
       if (Array.isArray(toolData) && toolData.length > 0) {
-        tools = (toolData[0] as { response: McpTool[] }).response;
+        tools = (toolData[0] as { response: McpTool[] }).response ?? [];
       }
     } catch {
       // no tools connected — ok
