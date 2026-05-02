@@ -34,12 +34,46 @@ export interface SubAgentContext {
   state?: Record<string, unknown>;
 }
 
+export interface SubAgentAction {
+  action: string;
+  description: string;
+}
+
 export interface SubAgent {
   name: string;
   description: string;
   /** When true the agent uses orchestrator-provided history; it does not maintain its own session state. */
   stateless: boolean;
+  /** Declared output actions — routing and terminal values this agent can return. */
+  actions: SubAgentAction[];
+  /** The JSON key used for the user-facing message in the agent's output. */
+  outputContentKey: string;
   call: (context: SubAgentContext, sessionId: string) => Promise<SubAgentResult>;
+}
+
+/** Builds the output format block injected at the end of the system prompt. */
+function buildOutputFormatBlock(
+  actions: SubAgentAction[],
+  outputContentKey: string,
+): string {
+  if (actions.length === 0) return '';
+  const actionList = actions
+    .map((a) => `- "${a.action}"${a.description ? ` — ${a.description}` : ''}`)
+    .join('\n');
+  return [
+    '',
+    '---',
+    'OUTPUT FORMAT — always return valid JSON, nothing else:',
+    '{',
+    `  "${outputContentKey}": "[message to the user]",`,
+    '  "crm_instructions": {',
+    '    "action": "<one of the actions listed below>"',
+    '  }',
+    '}',
+    '',
+    'Available actions:',
+    actionList,
+  ].join('\n');
 }
 
 export class SubAgentKit implements INodeType {
@@ -101,6 +135,44 @@ export class SubAgentKit implements INodeType {
         default: false,
         description: 'When enabled, the agent receives conversation history from the orchestrator instead of maintaining its own session memory. Recommended for agents that do not use tools (e.g. Gabi, Sofia, Aurora).',
       },
+
+      // ── Output Actions ────────────────────────────────────────────────────
+      {
+        displayName: 'Output Content Key',
+        name: 'outputContentKey',
+        type: 'string',
+        default: 'content_raw',
+        description: 'The JSON key used for the user-facing message in the agent output (e.g. content_raw). The output format block is auto-injected into the system prompt.',
+      },
+      {
+        displayName: 'Output Actions',
+        name: 'outputActions',
+        type: 'fixedCollection',
+        typeOptions: { multipleValues: true },
+        default: {},
+        description: 'Declare the possible crm_instructions.action values this agent can return. The list is auto-injected into the system prompt as the output format — no need to write it manually.',
+        options: [{
+          name: 'outputAction',
+          displayName: 'Action',
+          values: [
+            {
+              displayName: 'Action Value',
+              name: 'action',
+              type: 'string',
+              default: '',
+              description: 'The action string the agent will return (e.g. none, disqualify, route_to_sofia).',
+            },
+            {
+              displayName: 'Description',
+              name: 'description',
+              type: 'string',
+              default: '',
+              description: 'What this action means — shown to the LLM to guide its decision.',
+            },
+          ],
+        }],
+      },
+
       {
         displayName: 'Inline Skills',
         name: 'inlineSkills',
@@ -176,6 +248,15 @@ export class SubAgentKit implements INodeType {
     const stateless = this.getNodeParameter('stateless', 0, false) as boolean;
     const model = modelOverride || (creds.model as string) || 'qwen/qwen3-235b-a22b';
 
+    const outputContentKey = this.getNodeParameter('outputContentKey', 0, 'content_raw') as string;
+
+    const outputActionsRaw = this.getNodeParameter('outputActions', 0, { outputAction: [] }) as {
+      outputAction: Array<{ action: string; description: string }>;
+    };
+    const outputActions: SubAgentAction[] = (outputActionsRaw.outputAction ?? [])
+      .filter((a) => a.action)
+      .map((a) => ({ action: a.action, description: a.description ?? '' }));
+
     const inlineSkillsRaw = this.getNodeParameter('inlineSkills', 0, { skill: [] }) as {
       skill: Array<{ name: string; description: string; content: string }>;
     };
@@ -183,7 +264,8 @@ export class SubAgentKit implements INodeType {
       .filter((s) => s.name)
       .map((s) => ({ name: s.name, description: s.description, content: s.content, tags: [] }));
 
-    const systemPrompt = composeSystemPrompt(baseSystemPrompt, skills);
+    const outputFormatBlock = buildOutputFormatBlock(outputActions, outputContentKey);
+    const systemPrompt = composeSystemPrompt(baseSystemPrompt, skills) + outputFormatBlock;
 
     const guardrailsRaw = this.getNodeParameter('guardrails', 0, { guardrail: [] }) as {
       guardrail: Array<{
@@ -226,6 +308,8 @@ export class SubAgentKit implements INodeType {
       name: agentName,
       description: agentDescription,
       stateless,
+      actions: outputActions,
+      outputContentKey,
       call: async (context: SubAgentContext, sessionId: string) => {
         const { task, history: injectedHistory, state } = context;
 

@@ -6,6 +6,8 @@ function makeAgent(name: string, response: string, stateless = true): SubAgent {
     name,
     description: name,
     stateless,
+    actions: [],
+    outputContentKey: 'content_raw',
     call: async () => ({ response, usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15, iterations: 1 } }),
   };
 }
@@ -101,7 +103,7 @@ describe('runHandoffChain', () => {
 
     const agentMap = new Map<string, SubAgent>([
       ['gabi', {
-        name: 'gabi', description: '', stateless: true,
+        name: 'gabi', description: '', stateless: true, actions: [], outputContentKey: 'content_raw',
         call: async (ctx) => {
           agentsCalled.push('gabi');
           return {
@@ -111,7 +113,7 @@ describe('runHandoffChain', () => {
         },
       }],
       ['sofia', {
-        name: 'sofia', description: '', stateless: true,
+        name: 'sofia', description: '', stateless: true, actions: [], outputContentKey: 'content_raw',
         call: async () => {
           agentsCalled.push('sofia');
           return {
@@ -138,9 +140,9 @@ describe('runHandoffChain', () => {
     const agentsCalled: string[] = [];
 
     const agentMap = new Map<string, SubAgent>([
-      ['gabi', { name: 'gabi', description: '', stateless: true, call: async () => { agentsCalled.push('gabi'); return { response: JSON.stringify({ content_raw: 'ok', crm_instructions: { action: 'route_to_sofia' } }), usage: { prompt_tokens: 5, completion_tokens: 2, total_tokens: 7, iterations: 1 } }; } }],
-      ['sofia', { name: 'sofia', description: '', stateless: true, call: async () => { agentsCalled.push('sofia'); return { response: JSON.stringify({ resposta_para_cliente: 'qualificado', crm_instructions: { action: 'route_to_closer' } }), usage: { prompt_tokens: 5, completion_tokens: 2, total_tokens: 7, iterations: 1 } }; } }],
-      ['aurora', { name: 'aurora', description: '', stateless: true, call: async () => { agentsCalled.push('aurora'); return { response: JSON.stringify({ content_raw: 'fechando!', crm_instructions: { action: 'none' } }), usage: { prompt_tokens: 5, completion_tokens: 2, total_tokens: 7, iterations: 1 } }; } }],
+      ['gabi', { name: 'gabi', description: '', stateless: true, actions: [], outputContentKey: 'content_raw', call: async () => { agentsCalled.push('gabi'); return { response: JSON.stringify({ content_raw: 'ok', crm_instructions: { action: 'route_to_sofia' } }), usage: { prompt_tokens: 5, completion_tokens: 2, total_tokens: 7, iterations: 1 } }; } }],
+      ['sofia', { name: 'sofia', description: '', stateless: true, actions: [], outputContentKey: 'content_raw', call: async () => { agentsCalled.push('sofia'); return { response: JSON.stringify({ resposta_para_cliente: 'qualificado', crm_instructions: { action: 'route_to_closer' } }), usage: { prompt_tokens: 5, completion_tokens: 2, total_tokens: 7, iterations: 1 } }; } }],
+      ['aurora', { name: 'aurora', description: '', stateless: true, actions: [], outputContentKey: 'content_raw', call: async () => { agentsCalled.push('aurora'); return { response: JSON.stringify({ content_raw: 'fechando!', crm_instructions: { action: 'none' } }), usage: { prompt_tokens: 5, completion_tokens: 2, total_tokens: 7, iterations: 1 } }; } }],
     ]);
 
     const result = await runHandoffChain({
@@ -157,8 +159,8 @@ describe('runHandoffChain', () => {
 
   it('stops on terminal action defined by user', async () => {
     const agentMap = new Map<string, SubAgent>([
-      ['gabi', { name: 'gabi', description: '', stateless: true, call: async () => ({ response: JSON.stringify({ content_raw: 'Sem perfil.', crm_instructions: { action: 'disqualify' } }), usage: { prompt_tokens: 5, completion_tokens: 2, total_tokens: 7, iterations: 1 } }) }],
-      ['sofia', { name: 'sofia', description: '', stateless: true, call: async () => ({ response: JSON.stringify({ resposta_para_cliente: 'should not be called', crm_instructions: { action: 'none' } }), usage: { prompt_tokens: 5, completion_tokens: 2, total_tokens: 7, iterations: 1 } }) }],
+      ['gabi', { name: 'gabi', description: '', stateless: true, actions: [], outputContentKey: 'content_raw', call: async () => ({ response: JSON.stringify({ content_raw: 'Sem perfil.', crm_instructions: { action: 'disqualify' } }), usage: { prompt_tokens: 5, completion_tokens: 2, total_tokens: 7, iterations: 1 } }) }],
+      ['sofia', { name: 'sofia', description: '', stateless: true, actions: [], outputContentKey: 'content_raw', call: async () => ({ response: JSON.stringify({ resposta_para_cliente: 'should not be called', crm_instructions: { action: 'none' } }), usage: { prompt_tokens: 5, completion_tokens: 2, total_tokens: 7, iterations: 1 } }) }],
     ]);
 
     const result = await runHandoffChain({
@@ -173,7 +175,7 @@ describe('runHandoffChain', () => {
 
   it('respects maxHops limit', async () => {
     const looper: SubAgent = {
-      name: 'looper', description: '', stateless: true,
+      name: 'looper', description: '', stateless: true, actions: [], outputContentKey: 'content_raw',
       call: async () => ({ response: JSON.stringify({ content_raw: 'loop', crm_instructions: { action: 'self' } }), usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2, iterations: 1 } }),
     };
     const agentMap = new Map([['looper', looper]]);
@@ -190,8 +192,8 @@ describe('runHandoffChain', () => {
 
   it('aggregates usage from all hops', async () => {
     const agentMap = new Map<string, SubAgent>([
-      ['a', { name: 'a', description: '', stateless: true, call: async () => ({ response: JSON.stringify({ content_raw: 'a', crm_instructions: { action: 'go_b' } }), usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15, iterations: 1 } }) }],
-      ['b', { name: 'b', description: '', stateless: true, call: async () => ({ response: JSON.stringify({ content_raw: 'b', crm_instructions: { action: 'done' } }), usage: { prompt_tokens: 20, completion_tokens: 10, total_tokens: 30, iterations: 1 } }) }],
+      ['a', { name: 'a', description: '', stateless: true, actions: [], outputContentKey: 'content_raw', call: async () => ({ response: JSON.stringify({ content_raw: 'a', crm_instructions: { action: 'go_b' } }), usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15, iterations: 1 } }) }],
+      ['b', { name: 'b', description: '', stateless: true, actions: [], outputContentKey: 'content_raw', call: async () => ({ response: JSON.stringify({ content_raw: 'b', crm_instructions: { action: 'done' } }), usage: { prompt_tokens: 20, completion_tokens: 10, total_tokens: 30, iterations: 1 } }) }],
     ]);
 
     const result = await runHandoffChain({
@@ -210,8 +212,8 @@ describe('runHandoffChain', () => {
     const historySeen: Array<Array<{ role: string; content: string }>> = [];
 
     const agentMap = new Map<string, SubAgent>([
-      ['a', { name: 'a', description: '', stateless: true, call: async (ctx) => { historySeen.push(ctx.history ?? []); return { response: JSON.stringify({ content_raw: 'reply-a', crm_instructions: { action: 'go_b' } }), usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2, iterations: 1 } }; } }],
-      ['b', { name: 'b', description: '', stateless: true, call: async (ctx) => { historySeen.push(ctx.history ?? []); return { response: JSON.stringify({ content_raw: 'reply-b', crm_instructions: { action: 'done' } }), usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2, iterations: 1 } }; } }],
+      ['a', { name: 'a', description: '', stateless: true, actions: [], outputContentKey: 'content_raw', call: async (ctx) => { historySeen.push(ctx.history ?? []); return { response: JSON.stringify({ content_raw: 'reply-a', crm_instructions: { action: 'go_b' } }), usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2, iterations: 1 } }; } }],
+      ['b', { name: 'b', description: '', stateless: true, actions: [], outputContentKey: 'content_raw', call: async (ctx) => { historySeen.push(ctx.history ?? []); return { response: JSON.stringify({ content_raw: 'reply-b', crm_instructions: { action: 'done' } }), usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2, iterations: 1 } }; } }],
     ]);
 
     await runHandoffChain({

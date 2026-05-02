@@ -24,7 +24,7 @@ describe('Orchestrator supervisor pattern', () => {
     const researcher: SubAgent = {
       name: 'researcher',
       description: 'Does research',
-      stateless: false,
+      stateless: false, actions: [], outputContentKey: 'content_raw',
       call: async (ctx) => ({ response: `Research result for: ${ctx.task}`, usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, iterations: 0 } }),
     };
 
@@ -70,8 +70,8 @@ describe('Orchestrator supervisor pattern', () => {
   });
 
   it('handles multiple sub-agents', async () => {
-    const researcher: SubAgent = { name: 'researcher', description: 'research', stateless: false, call: async () => ({ response: 'facts', usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, iterations: 0 } }) };
-    const writer: SubAgent = { name: 'writer', description: 'write', stateless: false, call: async () => ({ response: 'article', usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, iterations: 0 } }) };
+    const researcher: SubAgent = { name: 'researcher', description: 'research', stateless: false, actions: [], outputContentKey: 'content_raw', call: async () => ({ response: 'facts', usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, iterations: 0 } }) };
+    const writer: SubAgent = { name: 'writer', description: 'write', stateless: false, actions: [], outputContentKey: 'content_raw', call: async () => ({ response: 'article', usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, iterations: 0 } }) };
 
     const tools = subAgentsToTools([researcher, writer], 'session-2');
     expect(tools).toHaveLength(2);
@@ -89,7 +89,7 @@ describe('Orchestrator supervisor pattern', () => {
     const calls: string[] = [];
     const agent: SubAgent = {
       name: 'tracker', description: 'tracks',
-      stateless: false,
+      stateless: false, actions: [], outputContentKey: 'content_raw',
       call: async (_ctx, sessionId) => { calls.push(sessionId); return { response: 'ok', usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, iterations: 0 } }; },
     };
     const tools = subAgentsToTools([agent], 'my-session-id');
@@ -101,7 +101,7 @@ describe('Orchestrator supervisor pattern', () => {
     const tasksSeen: string[] = [];
     const agent: SubAgent = {
       name: 'greeter', description: 'greets',
-      stateless: true,
+      stateless: true, actions: [], outputContentKey: 'content_raw',
       call: async (ctx) => { tasksSeen.push(ctx.task); return { response: `Hello: ${ctx.task}`, usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, iterations: 0 } }; },
     };
     const tools = subAgentsToTools([agent], 'session-x');
@@ -114,7 +114,7 @@ describe('Orchestrator supervisor pattern', () => {
     let receivedHistory: Array<{ role: string; content: string }> | undefined;
     const agent: SubAgent = {
       name: 'ctx-agent', description: 'context aware',
-      stateless: true,
+      stateless: true, actions: [], outputContentKey: 'content_raw',
       call: async (ctx) => { receivedHistory = ctx.history; return { response: 'ok', usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, iterations: 0 } }; },
     };
 
