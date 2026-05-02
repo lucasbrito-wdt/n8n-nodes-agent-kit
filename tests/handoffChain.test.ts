@@ -48,8 +48,8 @@ describe('resolveNextAgent', () => {
     ['julia', makeAgent('julia', '')],
   ]);
 
-  it('resolves route_to_sofia via generic pattern', () => {
-    expect(resolveNextAgent('route_to_sofia', agents)).toBe('sofia');
+  it('returns undefined for route_to_sofia without routingMap', () => {
+    expect(resolveNextAgent('route_to_sofia', agents)).toBeUndefined();
   });
 
   it('resolves user-defined alias via routingMap', () => {
@@ -61,12 +61,10 @@ describe('resolveNextAgent', () => {
     expect(resolveNextAgent('route_to_sofia', agents, { route_to_sofia: 'julia' })).toBe('julia');
   });
 
-  it('returns undefined when action does not match any agent without routingMap', () => {
+  it('returns undefined for any action without routingMap entry', () => {
     expect(resolveNextAgent('route_to_closer', agents)).toBeUndefined();
-  });
-
-  it('returns undefined for unknown agent even with prefix stripped', () => {
     expect(resolveNextAgent('route_to_unknown', agents)).toBeUndefined();
+    expect(resolveNextAgent('anything', agents)).toBeUndefined();
   });
 
   it('returns undefined when no routingMap entry and name not in agentMap', () => {
@@ -98,7 +96,7 @@ describe('runHandoffChain', () => {
     expect(result.trace[0].agent).toBe('gabi');
   });
 
-  it('chains gabi → sofia when action is route_to_sofia', async () => {
+  it('chains gabi → sofia via explicit routingMap', async () => {
     const agentsCalled: string[] = [];
 
     const agentMap = new Map<string, SubAgent>([
@@ -127,6 +125,8 @@ describe('runHandoffChain', () => {
     const result = await runHandoffChain({
       entryAgent: 'gabi', message: 'preciso de ajuda', agentMap,
       sessionId: 's1', history: [], maxHops: 5,
+      routingMap: { route_to_sofia: 'sofia' },
+      terminalActions: new Set(['none']),
     });
 
     expect(agentsCalled).toEqual(['gabi', 'sofia']);
@@ -146,7 +146,7 @@ describe('runHandoffChain', () => {
     const result = await runHandoffChain({
       entryAgent: 'gabi', message: 'quero contratar', agentMap,
       sessionId: 's2', history: [], maxHops: 5,
-      routingMap: { route_to_closer: 'aurora' },
+      routingMap: { route_to_sofia: 'sofia', route_to_closer: 'aurora' },
       terminalActions: new Set(['none', 'disqualify']),
     });
 
@@ -172,16 +172,17 @@ describe('runHandoffChain', () => {
   });
 
   it('respects maxHops limit', async () => {
-    // Agent always routes to itself — infinite loop protection
     const looper: SubAgent = {
       name: 'looper', description: '', stateless: true,
-      call: async () => ({ response: JSON.stringify({ content_raw: 'loop', crm_instructions: { action: 'route_to_looper' } }), usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2, iterations: 1 } }),
+      call: async () => ({ response: JSON.stringify({ content_raw: 'loop', crm_instructions: { action: 'self' } }), usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2, iterations: 1 } }),
     };
     const agentMap = new Map([['looper', looper]]);
 
     const result = await runHandoffChain({
       entryAgent: 'looper', message: 'go', agentMap,
       sessionId: 's4', history: [], maxHops: 3,
+      routingMap: { self: 'looper' },
+      terminalActions: new Set([]),
     });
 
     expect(result.trace).toHaveLength(3);
@@ -189,13 +190,15 @@ describe('runHandoffChain', () => {
 
   it('aggregates usage from all hops', async () => {
     const agentMap = new Map<string, SubAgent>([
-      ['a', { name: 'a', description: '', stateless: true, call: async () => ({ response: JSON.stringify({ content_raw: 'a', crm_instructions: { action: 'route_to_b' } }), usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15, iterations: 1 } }) }],
-      ['b', { name: 'b', description: '', stateless: true, call: async () => ({ response: JSON.stringify({ content_raw: 'b', crm_instructions: { action: 'none' } }), usage: { prompt_tokens: 20, completion_tokens: 10, total_tokens: 30, iterations: 1 } }) }],
+      ['a', { name: 'a', description: '', stateless: true, call: async () => ({ response: JSON.stringify({ content_raw: 'a', crm_instructions: { action: 'go_b' } }), usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15, iterations: 1 } }) }],
+      ['b', { name: 'b', description: '', stateless: true, call: async () => ({ response: JSON.stringify({ content_raw: 'b', crm_instructions: { action: 'done' } }), usage: { prompt_tokens: 20, completion_tokens: 10, total_tokens: 30, iterations: 1 } }) }],
     ]);
 
     const result = await runHandoffChain({
       entryAgent: 'a', message: 'start', agentMap,
       sessionId: 's5', history: [], maxHops: 5,
+      routingMap: { go_b: 'b' },
+      terminalActions: new Set(['done']),
     });
 
     expect(result.usage.total_tokens).toBe(45);
@@ -207,18 +210,18 @@ describe('runHandoffChain', () => {
     const historySeen: Array<Array<{ role: string; content: string }>> = [];
 
     const agentMap = new Map<string, SubAgent>([
-      ['a', { name: 'a', description: '', stateless: true, call: async (ctx) => { historySeen.push(ctx.history ?? []); return { response: JSON.stringify({ content_raw: 'reply-a', crm_instructions: { action: 'route_to_b' } }), usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2, iterations: 1 } }; } }],
-      ['b', { name: 'b', description: '', stateless: true, call: async (ctx) => { historySeen.push(ctx.history ?? []); return { response: JSON.stringify({ content_raw: 'reply-b', crm_instructions: { action: 'none' } }), usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2, iterations: 1 } }; } }],
+      ['a', { name: 'a', description: '', stateless: true, call: async (ctx) => { historySeen.push(ctx.history ?? []); return { response: JSON.stringify({ content_raw: 'reply-a', crm_instructions: { action: 'go_b' } }), usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2, iterations: 1 } }; } }],
+      ['b', { name: 'b', description: '', stateless: true, call: async (ctx) => { historySeen.push(ctx.history ?? []); return { response: JSON.stringify({ content_raw: 'reply-b', crm_instructions: { action: 'done' } }), usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2, iterations: 1 } }; } }],
     ]);
 
     await runHandoffChain({
       entryAgent: 'a', message: 'hello', agentMap,
       sessionId: 's6', history: [], maxHops: 5,
+      routingMap: { go_b: 'b' },
+      terminalActions: new Set(['done']),
     });
 
-    // Agent A sees empty history (first call)
     expect(historySeen[0]).toHaveLength(0);
-    // Agent B sees the exchange from agent A
     expect(historySeen[1]).toHaveLength(2);
     expect(historySeen[1][0]).toEqual({ role: 'user', content: 'hello' });
     expect(historySeen[1][1]).toEqual({ role: 'assistant', content: 'reply-a' });

@@ -51,7 +51,8 @@ export function resolveNextAgent(
   agentMap: Map<string, SubAgent>,
   routingMap: Record<string, string> = {},
 ): string | undefined {
-  const target = routingMap[action] ?? action.replace(/^route_to_/, '');
+  const target = routingMap[action];
+  if (!target) return undefined;
   return agentMap.has(target) ? target : undefined;
 }
 
