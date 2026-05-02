@@ -46,8 +46,10 @@ export interface SubAgent {
   stateless: boolean;
   /** Declared output actions — routing and terminal values this agent can return. */
   actions: SubAgentAction[];
-  /** The JSON key used for the user-facing message in the agent's output. */
+  /** JSON key for the user-facing message in the agent output (e.g. "content_raw"). */
   outputContentKey: string;
+  /** JSON key for the routing/instructions block in the agent output (e.g. "routing"). */
+  outputInstructionsKey: string;
   call: (context: SubAgentContext, sessionId: string) => Promise<SubAgentResult>;
 }
 
@@ -55,6 +57,7 @@ export interface SubAgent {
 function buildOutputFormatBlock(
   actions: SubAgentAction[],
   outputContentKey: string,
+  outputInstructionsKey: string,
 ): string {
   if (actions.length === 0) return '';
   const actionList = actions
@@ -66,7 +69,7 @@ function buildOutputFormatBlock(
     'OUTPUT FORMAT — always return valid JSON, nothing else:',
     '{',
     `  "${outputContentKey}": "[message to the user]",`,
-    '  "crm_instructions": {',
+    `  "${outputInstructionsKey}": {`,
     '    "action": "<one of the actions listed below>"',
     '  }',
     '}',
@@ -142,7 +145,14 @@ export class SubAgentKit implements INodeType {
         name: 'outputContentKey',
         type: 'string',
         default: 'content_raw',
-        description: 'The JSON key used for the user-facing message in the agent output (e.g. content_raw). The output format block is auto-injected into the system prompt.',
+        description: 'JSON key for the user-facing message in the agent output.',
+      },
+      {
+        displayName: 'Output Instructions Key',
+        name: 'outputInstructionsKey',
+        type: 'string',
+        default: 'instructions',
+        description: 'JSON key for the routing/control block in the agent output (e.g. instructions, routing, control).',
       },
       {
         displayName: 'Output Actions',
@@ -249,6 +259,7 @@ export class SubAgentKit implements INodeType {
     const model = modelOverride || (creds.model as string) || 'qwen/qwen3-235b-a22b';
 
     const outputContentKey = this.getNodeParameter('outputContentKey', 0, 'content_raw') as string;
+    const outputInstructionsKey = this.getNodeParameter('outputInstructionsKey', 0, 'instructions') as string;
 
     const outputActionsRaw = this.getNodeParameter('outputActions', 0, { outputAction: [] }) as {
       outputAction: Array<{ action: string; description: string }>;
@@ -264,7 +275,7 @@ export class SubAgentKit implements INodeType {
       .filter((s) => s.name)
       .map((s) => ({ name: s.name, description: s.description, content: s.content, tags: [] }));
 
-    const outputFormatBlock = buildOutputFormatBlock(outputActions, outputContentKey);
+    const outputFormatBlock = buildOutputFormatBlock(outputActions, outputContentKey, outputInstructionsKey);
     const systemPrompt = composeSystemPrompt(baseSystemPrompt, skills) + outputFormatBlock;
 
     const guardrailsRaw = this.getNodeParameter('guardrails', 0, { guardrail: [] }) as {
@@ -310,6 +321,7 @@ export class SubAgentKit implements INodeType {
       stateless,
       actions: outputActions,
       outputContentKey,
+      outputInstructionsKey,
       call: async (context: SubAgentContext, sessionId: string) => {
         const { task, history: injectedHistory, state } = context;
 

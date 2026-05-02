@@ -16,20 +16,24 @@ export interface HandoffChainResult {
 }
 
 /**
- * Extracts the user-facing text and routing action from any agent output.
- * Supports multiple output key conventions:
- *   - content_raw            (most agents)
- *   - resposta_para_cliente  (Sofia-style)
- * Falls back to the raw string when the output is not valid JSON.
+ * Extracts the user-facing text and routing action from an agent's JSON output.
+ *
+ * @param raw              Raw string returned by the agent.
+ * @param contentKey       JSON key for the user-facing message (e.g. "content_raw").
+ * @param instructionsKey  JSON key for the routing block (e.g. "routing").
+ *
+ * Falls back gracefully when the output is not valid JSON.
  */
-export function parseAgentOutput(raw: string): { contentRaw: string; action: string } {
+export function parseAgentOutput(
+  raw: string,
+  contentKey = 'content_raw',
+  instructionsKey = 'instructions',
+): { contentRaw: string; action: string } {
   try {
     const parsed = JSON.parse(raw) as Record<string, unknown>;
-    const contentRaw = String(
-      parsed['content_raw'] ?? parsed['resposta_para_cliente'] ?? raw,
-    );
-    const crm = parsed['crm_instructions'] as Record<string, unknown> | undefined;
-    const action = String(crm?.['action'] ?? 'none');
+    const contentRaw = String(parsed[contentKey] ?? raw);
+    const block = parsed[instructionsKey] as Record<string, unknown> | undefined;
+    const action = String(block?.['action'] ?? 'none');
     return { contentRaw, action };
   } catch {
     return { contentRaw: raw, action: 'none' };
@@ -37,14 +41,8 @@ export function parseAgentOutput(raw: string): { contentRaw: string; action: str
 }
 
 /**
- * Resolves the next agent name from a crm_instructions.action value.
- *
- * Resolution order:
- *  1. User-defined routingMap (action → agentName)
- *  2. Generic pattern: strips "route_to_" prefix and checks if the remainder
- *     matches a connected agent name
- *
- * Returns undefined when no match is found (chain stops).
+ * Resolves the next agent name from a routing action value.
+ * Only the user-defined routingMap is consulted — no automatic inference.
  */
 export function resolveNextAgent(
   action: string,
@@ -66,18 +64,16 @@ export interface HandoffChainParams {
   maxHops: number;
   /** User-defined action → agentName routing table. */
   routingMap?: Record<string, string>;
-  /** Actions that stop the chain. Defaults to ['none'] if not provided. */
+  /** Actions that stop the chain. */
   terminalActions?: Set<string>;
 }
 
 /**
  * Runs a deterministic handoff chain.
  *
- * Each agent returns structured JSON with crm_instructions.action.
- * The chain resolves the next agent using the user-defined routingMap
- * (and falls back to the "route_to_<name>" pattern) until a terminal
- * action is reached or maxHops is exceeded.
- * No orchestrator LLM is involved — routing is pure code.
+ * Each agent returns structured JSON parsed using its own configured
+ * contentKey and instructionsKey. Routing is driven purely by the
+ * user-defined routingMap — no automatic inference.
  */
 export async function runHandoffChain(params: HandoffChainParams): Promise<HandoffChainResult> {
   const {
@@ -109,7 +105,12 @@ export async function runHandoffChain(params: HandoffChainParams): Promise<Hando
     totalUsage.total_tokens += result.usage.total_tokens;
     totalUsage.iterations += result.usage.iterations;
 
-    const { contentRaw, action } = parseAgentOutput(result.response);
+    // Use each agent's own configured keys
+    const { contentRaw, action } = parseAgentOutput(
+      result.response,
+      agent.outputContentKey,
+      agent.outputInstructionsKey,
+    );
     finalResponse = contentRaw;
 
     trace.push({

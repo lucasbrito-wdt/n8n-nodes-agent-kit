@@ -61,7 +61,7 @@ function subAgentsToTools(
 
       const start = Date.now();
       const result = await agent.call(subAgentContext, sessionId);
-      const { contentRaw } = parseAgentOutput(result.response);
+      const { contentRaw } = parseAgentOutput(result.response, agent.outputContentKey, agent.outputInstructionsKey);
 
       trace.push({
         step: trace.length + 1,
