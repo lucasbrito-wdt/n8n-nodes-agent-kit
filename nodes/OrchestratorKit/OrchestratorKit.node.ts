@@ -87,7 +87,7 @@ export class OrchestratorKit implements INodeType {
     icon: 'fa:brain',
     group: ['transform'],
     version: 1,
-    description: 'Supervisor agent that delegates tasks to connected SubAgentKit nodes.',
+    description: 'Agente supervisor que delega tarefas aos nós SubAgentKit conectados.',
     defaults: { name: 'Orchestrator Kit' },
     inputs: [
       NodeConnectionTypes.Main,
@@ -101,29 +101,29 @@ export class OrchestratorKit implements INodeType {
     properties: [
       // ── Mode ──────────────────────────────────────────────────────────────
       {
-        displayName: 'Execution Mode',
+        displayName: 'Modo de Execução',
         name: 'executionMode',
         type: 'options',
         options: [
           {
-            name: 'Orchestrator (LLM decides routing)',
+            name: 'Orquestrador (LLM decide o roteamento)',
             value: 'orchestrator',
-            description: 'A supervisor LLM reads all agents as tools and decides when to call each one.',
+            description: 'Um LLM supervisor lê todos os agentes como ferramentas e decide quando chamar cada um.',
           },
           {
-            name: 'Handoff Chain (deterministic routing)',
+            name: 'Cadeia de Handoff (roteamento determinístico)',
             value: 'handoff',
-            description: 'Agents route themselves via crm_instructions.action. No orchestrator LLM overhead.',
+            description: 'Os agentes se roteiam via action nas instruções de saída. Sem overhead de LLM orquestrador.',
           },
         ],
         default: 'orchestrator',
       },
 
       // ── Common ────────────────────────────────────────────────────────────
-      { displayName: 'Input Message Field', name: 'inputField', type: 'string', default: 'message' },
-      { displayName: 'Session ID Field', name: 'sessionIdField', type: 'string', default: 'sessionId' },
-      { displayName: 'Output Field', name: 'outputField', type: 'string', default: 'response' },
-      { displayName: 'Model Override', name: 'modelOverride', type: 'string', default: '' },
+      { displayName: 'Campo da Mensagem de Entrada', name: 'inputField', type: 'string', default: 'message' },
+      { displayName: 'Campo do ID de Sessão', name: 'sessionIdField', type: 'string', default: 'sessionId' },
+      { displayName: 'Campo de Saída', name: 'outputField', type: 'string', default: 'response' },
+      { displayName: 'Modelo Alternativo', name: 'modelOverride', type: 'string', default: '' },
 
       // ── Orchestrator mode only ────────────────────────────────────────────
       {
@@ -131,11 +131,11 @@ export class OrchestratorKit implements INodeType {
         name: 'systemPrompt',
         type: 'string',
         typeOptions: { rows: 6 },
-        default: 'You are a supervisor AI. Delegate tasks to your specialized agents as needed.',
+        default: 'Você é um supervisor de IA. Delegue tarefas aos seus agentes especializados conforme necessário.',
         displayOptions: { show: { executionMode: ['orchestrator'] } },
       },
       {
-        displayName: 'Max Iterations',
+        displayName: 'Máximo de Iterações',
         name: 'maxIterations',
         type: 'number',
         default: 20,
@@ -144,70 +144,70 @@ export class OrchestratorKit implements INodeType {
 
       // ── Handoff mode only ─────────────────────────────────────────────────
       {
-        displayName: 'Entry Agent',
+        displayName: 'Agente de Entrada',
         name: 'entryAgent',
         type: 'string',
         default: '',
-        description: 'Name of the first SubAgent to call. Must match the Agent Name set in the SubAgentKit node.',
+        description: 'Nome do primeiro SubAgente a ser chamado. Deve corresponder ao Nome do Agente definido no nó SubAgentKit.',
         displayOptions: { show: { executionMode: ['handoff'] } },
       },
       {
-        displayName: 'Max Hops',
+        displayName: 'Máximo de Saltos',
         name: 'maxHops',
         type: 'number',
         default: 5,
-        description: 'Maximum number of agent-to-agent handoffs before stopping.',
+        description: 'Número máximo de handoffs entre agentes antes de encerrar a cadeia.',
         displayOptions: { show: { executionMode: ['handoff'] } },
       },
       {
-        displayName: 'Routing Map',
+        displayName: 'Mapa de Roteamento',
         name: 'routingMap',
         type: 'fixedCollection',
         typeOptions: { multipleValues: true },
         default: {},
-        description: 'Maps crm_instructions.action values to agent names. If an action is not listed here, the chain tries to strip "route_to_" from the value and match an agent by name.',
+        description: 'Mapeia os valores de action para nomes de agentes. Se uma ação não estiver listada, a cadeia encerrará sem roteamento.',
         displayOptions: { show: { executionMode: ['handoff'] } },
         options: [{
           name: 'route',
-          displayName: 'Route',
+          displayName: 'Rota',
           values: [
             {
-              displayName: 'Action',
+              displayName: 'Ação',
               name: 'action',
               type: 'string',
               default: '',
-              description: 'The crm_instructions.action value returned by an agent (e.g. route_to_closer, escalate).',
+              description: 'Valor de action retornado pelo agente (ex: route_to_closer, escalate).',
             },
             {
-              displayName: 'Agent Name',
+              displayName: 'Nome do Agente',
               name: 'agentName',
               type: 'string',
               default: '',
-              description: 'The SubAgent to call when this action is returned.',
+              description: 'O SubAgente a ser chamado quando esta ação for retornada.',
             },
           ],
         }],
       },
       {
-        displayName: 'Terminal Actions',
+        displayName: 'Ações Terminais',
         name: 'terminalActions',
         type: 'string',
         default: 'none, disqualify, human_handoff, contract_generated, awaiting_signature, generate_financial, follow_up_closer, follow_up_sdr',
-        description: 'Comma-separated list of crm_instructions.action values that stop the chain. Edit to match your agents\' output.',
+        description: 'Lista de actions separadas por vírgula que encerram a cadeia. Edite para corresponder ao output dos seus agentes.',
         displayOptions: { show: { executionMode: ['handoff'] } },
       },
 
       // ── Skills ────────────────────────────────────────────────────────────
       {
-        displayName: 'Skills Field',
+        displayName: 'Campo de Skills',
         name: 'skillsField',
         type: 'string',
         default: '__skills__',
-        description: 'Field path in the input JSON that carries skills from a Skill Loader node.',
+        description: 'Caminho do campo no JSON de entrada que carrega skills do nó Skill Loader.',
         displayOptions: { show: { executionMode: ['orchestrator'] } },
       },
       {
-        displayName: 'Inline Skills',
+        displayName: 'Skills Inline',
         name: 'inlineSkills',
         type: 'fixedCollection',
         typeOptions: { multipleValues: true },
@@ -216,9 +216,9 @@ export class OrchestratorKit implements INodeType {
         options: [{
           name: 'skill', displayName: 'Skill',
           values: [
-            { displayName: 'Name', name: 'name', type: 'string', default: '' },
-            { displayName: 'Description', name: 'description', type: 'string', default: '' },
-            { displayName: 'Content', name: 'content', type: 'string', typeOptions: { rows: 6 }, default: '' },
+            { displayName: 'Nome', name: 'name', type: 'string', default: '' },
+            { displayName: 'Descrição', name: 'description', type: 'string', default: '' },
+            { displayName: 'Conteúdo', name: 'content', type: 'string', typeOptions: { rows: 6 }, default: '' },
           ],
         }],
       },
@@ -233,25 +233,25 @@ export class OrchestratorKit implements INodeType {
         options: [{
           name: 'guardrail', displayName: 'Guardrail',
           values: [
-            { displayName: 'Name', name: 'name', type: 'string', default: '' },
+            { displayName: 'Nome', name: 'name', type: 'string', default: '' },
             {
-              displayName: 'Phase', name: 'phase', type: 'options',
-              options: [{ name: 'Pre', value: 'pre' }, { name: 'Post', value: 'post' }],
+              displayName: 'Fase', name: 'phase', type: 'options',
+              options: [{ name: 'Pré (valida entrada)', value: 'pre' }, { name: 'Pós (valida saída)', value: 'post' }],
               default: 'pre',
             },
             {
-              displayName: 'Check Type', name: 'type', type: 'options',
+              displayName: 'Tipo de Verificação', name: 'type', type: 'options',
               options: [
-                { name: 'Keywords', value: 'keywords' },
-                { name: 'Custom Regex', value: 'customRegex' },
-                { name: 'Jailbreak Detection', value: 'jailbreak' },
-                { name: 'NSFW Content', value: 'nsfw' },
+                { name: 'Palavras-chave', value: 'keywords' },
+                { name: 'Regex Customizado', value: 'customRegex' },
+                { name: 'Detecção de Jailbreak', value: 'jailbreak' },
+                { name: 'Conteúdo NSFW', value: 'nsfw' },
               ],
               default: 'keywords',
             },
-            { displayName: 'Fallback Response', name: 'fallbackResponse', type: 'string', default: 'I cannot respond to that.' },
-            { displayName: 'Keywords', name: 'keywords', type: 'string', default: '', displayOptions: { show: { type: ['keywords'] } } },
-            { displayName: 'Pattern', name: 'pattern', type: 'string', default: '', displayOptions: { show: { type: ['customRegex'] } } },
+            { displayName: 'Resposta de Fallback', name: 'fallbackResponse', type: 'string', default: 'Não posso responder a isso.' },
+            { displayName: 'Palavras-chave', name: 'keywords', type: 'string', default: '', displayOptions: { show: { type: ['keywords'] } } },
+            { displayName: 'Padrão (Regex)', name: 'pattern', type: 'string', default: '', displayOptions: { show: { type: ['customRegex'] } } },
           ],
         }],
       },

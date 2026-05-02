@@ -39,26 +39,26 @@ export class AgentMemory implements INodeType {
     icon: 'fa:database',
     group: ['transform'],
     version: 1,
-    description: 'Provides short-term session memory and long-term SQLite storage for AgentKit.',
+    description: 'Fornece memória de sessão de curto prazo e armazenamento SQLite de longo prazo para o AgentKit.',
     defaults: { name: 'Agent Memory' },
     inputs: [],
     outputs: [{ type: NodeConnectionTypes.AiMemory }],
     outputNames: ['memory'],
     properties: [
       {
-        displayName: 'SQLite Database Path',
+        displayName: 'Caminho do Banco SQLite',
         name: 'dbPath',
         type: 'string',
         default: path.join(os.homedir(), '.agentkit', 'memory.db'),
         description:
-          'Absolute path to the SQLite database file. Directory will be created if it does not exist.',
+          'Caminho absoluto para o arquivo SQLite. O diretório será criado automaticamente se não existir.',
       },
       {
-        displayName: 'Session Window Size',
+        displayName: 'Tamanho da Janela de Sessão',
         name: 'windowSize',
         type: 'number',
         default: 20,
-        description: 'Maximum number of messages to retain per session (short-term buffer).',
+        description: 'Número máximo de mensagens retidas por sessão (buffer de curto prazo).',
       },
     ],
   };
