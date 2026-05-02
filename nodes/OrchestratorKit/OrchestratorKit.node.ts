@@ -15,15 +15,12 @@ import type { McpTool } from '../McpGateway/McpGateway.node';
 import type { SubAgent, SubAgentContext, SubAgentUsage } from '../SubAgentKit/SubAgentKit.node';
 import { composeSystemPrompt, buildSkillTool } from '../../utils/skillParser';
 import type { Skill } from '../../utils/skillParser';
+import { runHandoffChain, parseAgentOutput } from '../../utils/handoffChain';
+import type { HandoffTraceEntry } from '../../utils/handoffChain';
 
-interface TraceEntry {
-  step: number;
-  agent: string;
-  task: string;
-  response: string;
-  durationMs: number;
-  usage: SubAgentUsage;
-}
+type TraceEntry = HandoffTraceEntry;
+
+// ─── Orchestrator loop (free LLM routing) ────────────────────────────────────
 
 function subAgentsToTools(
   subAgents: SubAgent[],
@@ -50,12 +47,10 @@ function subAgentsToTools(
 
       let state: Record<string, unknown> | undefined;
       if (args.context) {
-        try {
-          state = JSON.parse(String(args.context)) as Record<string, unknown>;
-        } catch { /* ignore malformed context */ }
+        try { state = JSON.parse(String(args.context)) as Record<string, unknown>; }
+        catch { /* ignore malformed context */ }
       }
 
-      // For stateless agents, forward the orchestrator's conversation history
       const history = agent.stateless
         ? orchestratorMessages
             .filter((m) => m.role === 'user' || m.role === 'assistant')
@@ -66,18 +61,24 @@ function subAgentsToTools(
 
       const start = Date.now();
       const result = await agent.call(subAgentContext, sessionId);
+      const { contentRaw } = parseAgentOutput(result.response);
+
       trace.push({
         step: trace.length + 1,
         agent: agent.name,
         task: task.length > 300 ? task.slice(0, 300) + '…' : task,
-        response: result.response.length > 500 ? result.response.slice(0, 500) + '…' : result.response,
+        response: contentRaw.length > 500 ? contentRaw.slice(0, 500) + '…' : contentRaw,
         durationMs: Date.now() - start,
         usage: result.usage,
       });
-      return result.response;
+
+      // Return parsed content_raw so the orchestrator LLM sees clean text, not raw JSON
+      return contentRaw;
     },
   }));
 }
+
+// ─── Node ─────────────────────────────────────────────────────────────────────
 
 export class OrchestratorKit implements INodeType {
   description: INodeTypeDescription = {
@@ -98,26 +99,83 @@ export class OrchestratorKit implements INodeType {
     outputs: [NodeConnectionTypes.Main],
     credentials: [{ name: 'openRouterApi', required: true }],
     properties: [
+      // ── Mode ──────────────────────────────────────────────────────────────
+      {
+        displayName: 'Execution Mode',
+        name: 'executionMode',
+        type: 'options',
+        options: [
+          {
+            name: 'Orchestrator (LLM decides routing)',
+            value: 'orchestrator',
+            description: 'A supervisor LLM reads all agents as tools and decides when to call each one.',
+          },
+          {
+            name: 'Handoff Chain (deterministic routing)',
+            value: 'handoff',
+            description: 'Agents route themselves via crm_instructions.action. No orchestrator LLM overhead.',
+          },
+        ],
+        default: 'orchestrator',
+      },
+
+      // ── Common ────────────────────────────────────────────────────────────
       { displayName: 'Input Message Field', name: 'inputField', type: 'string', default: 'message' },
       { displayName: 'Session ID Field', name: 'sessionIdField', type: 'string', default: 'sessionId' },
+      { displayName: 'Output Field', name: 'outputField', type: 'string', default: 'response' },
+      { displayName: 'Model Override', name: 'modelOverride', type: 'string', default: '' },
+
+      // ── Orchestrator mode only ────────────────────────────────────────────
       {
-        displayName: 'System Prompt', name: 'systemPrompt', type: 'string',
+        displayName: 'System Prompt',
+        name: 'systemPrompt',
+        type: 'string',
         typeOptions: { rows: 6 },
         default: 'You are a supervisor AI. Delegate tasks to your specialized agents as needed.',
+        displayOptions: { show: { executionMode: ['orchestrator'] } },
       },
-      { displayName: 'Model Override', name: 'modelOverride', type: 'string', default: '' },
-      { displayName: 'Max Iterations', name: 'maxIterations', type: 'number', default: 20 },
-      { displayName: 'Output Field', name: 'outputField', type: 'string', default: 'response' },
+      {
+        displayName: 'Max Iterations',
+        name: 'maxIterations',
+        type: 'number',
+        default: 20,
+        displayOptions: { show: { executionMode: ['orchestrator'] } },
+      },
+
+      // ── Handoff mode only ─────────────────────────────────────────────────
+      {
+        displayName: 'Entry Agent',
+        name: 'entryAgent',
+        type: 'string',
+        default: 'gabi',
+        description: 'Name of the first SubAgent to call. Must match the Agent Name set in the SubAgentKit node.',
+        displayOptions: { show: { executionMode: ['handoff'] } },
+      },
+      {
+        displayName: 'Max Hops',
+        name: 'maxHops',
+        type: 'number',
+        default: 5,
+        description: 'Maximum number of agent-to-agent handoffs before stopping.',
+        displayOptions: { show: { executionMode: ['handoff'] } },
+      },
+
+      // ── Skills ────────────────────────────────────────────────────────────
       {
         displayName: 'Skills Field',
         name: 'skillsField',
         type: 'string',
         default: '__skills__',
-        description: 'Field path in the input JSON that carries skills from a Skill Loader node. Supports dot/bracket notation (e.g. __skills__, data.skills).',
+        description: 'Field path in the input JSON that carries skills from a Skill Loader node.',
+        displayOptions: { show: { executionMode: ['orchestrator'] } },
       },
       {
-        displayName: 'Inline Skills', name: 'inlineSkills', type: 'fixedCollection',
-        typeOptions: { multipleValues: true }, default: {},
+        displayName: 'Inline Skills',
+        name: 'inlineSkills',
+        type: 'fixedCollection',
+        typeOptions: { multipleValues: true },
+        default: {},
+        displayOptions: { show: { executionMode: ['orchestrator'] } },
         options: [{
           name: 'skill', displayName: 'Skill',
           values: [
@@ -127,9 +185,14 @@ export class OrchestratorKit implements INodeType {
           ],
         }],
       },
+
+      // ── Guardrails ────────────────────────────────────────────────────────
       {
-        displayName: 'Guardrails', name: 'guardrails', type: 'fixedCollection',
-        typeOptions: { multipleValues: true }, default: {},
+        displayName: 'Guardrails',
+        name: 'guardrails',
+        type: 'fixedCollection',
+        typeOptions: { multipleValues: true },
+        default: {},
         options: [{
           name: 'guardrail', displayName: 'Guardrail',
           values: [
@@ -172,60 +235,34 @@ export class OrchestratorKit implements INodeType {
     let memory: IAgentMemory | null = null;
     try {
       const memData = await this.getInputConnectionData(NodeConnectionTypes.AiMemory, 0);
-      if (Array.isArray(memData) && memData.length > 0) {
-        memory = (memData[0] as IAgentMemory) ?? null;
-      }
+      if (Array.isArray(memData) && memData.length > 0) memory = (memData[0] as IAgentMemory) ?? null;
     } catch { /* no memory */ }
 
     let mcpTools: McpTool[] = [];
     try {
       const toolData = await this.getInputConnectionData(NodeConnectionTypes.AiTool, 0);
-      if (Array.isArray(toolData) && toolData.length > 0) {
-        mcpTools = (toolData as McpTool[][]).flat();
-      }
+      if (Array.isArray(toolData) && toolData.length > 0) mcpTools = (toolData as McpTool[][]).flat();
     } catch { /* no tools */ }
 
     let subAgents: SubAgent[] = [];
     try {
       const agentData = await this.getInputConnectionData(NodeConnectionTypes.AiAgent, 0);
-      if (Array.isArray(agentData)) {
-        subAgents = (agentData as SubAgent[]).filter(Boolean);
-      }
+      if (Array.isArray(agentData)) subAgents = (agentData as SubAgent[]).filter(Boolean);
     } catch { /* no sub-agents */ }
+
+    const agentMap = new Map(subAgents.map((a) => [a.name, a]));
 
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
+      const executionMode = this.getNodeParameter('executionMode', i, 'orchestrator') as 'orchestrator' | 'handoff';
       const inputField = this.getNodeParameter('inputField', i) as string;
       const sessionIdField = this.getNodeParameter('sessionIdField', i) as string;
-      const baseSystemPrompt = this.getNodeParameter('systemPrompt', i) as string;
       const modelOverride = this.getNodeParameter('modelOverride', i, '') as string;
-      const maxIterations = this.getNodeParameter('maxIterations', i, 20) as number;
       const outputField = this.getNodeParameter('outputField', i, 'response') as string;
-      const skillsField = this.getNodeParameter('skillsField', i, '__skills__') as string;
       const model = modelOverride || (creds.model as string) || 'qwen/qwen3-235b-a22b';
 
       const userMessage = String(resolveField(item.json, inputField) ?? '');
       const sessionId = String(resolveField(item.json, sessionIdField) ?? `session-${i}`);
-
-      const inlineSkillsRaw = this.getNodeParameter('inlineSkills', i, { skill: [] }) as {
-        skill: Array<{ name: string; description: string; content: string }>;
-      };
-      const inlineSkills: Skill[] = (inlineSkillsRaw.skill ?? [])
-        .filter((s) => s.name)
-        .map((s) => {
-          const rawContent = s.content ?? '';
-          const content = String(resolveField(item.json, rawContent) ?? rawContent);
-          return { name: s.name, description: s.description, content, tags: [] };
-        });
-
-      const rawLoaderSkills = resolveField(item.json, skillsField);
-      const loaderSkills = (Array.isArray(rawLoaderSkills) ? rawLoaderSkills : []) as Skill[];
-      // Loader skills override inline skills with the same name
-      const loaderNames = new Set(loaderSkills.map((s) => s.name));
-      const skills: Skill[] = [
-        ...inlineSkills.filter((s) => !loaderNames.has(s.name)),
-        ...loaderSkills,
-      ];
 
       const guardrailsRaw = this.getNodeParameter('guardrails', i, { guardrail: [] }) as {
         guardrail: Array<{ name: string; phase: string; type: string; fallbackResponse: string; keywords?: string; pattern?: string }>;
@@ -256,48 +293,113 @@ export class OrchestratorKit implements INodeType {
         continue;
       }
 
-      const systemPrompt = composeSystemPrompt(baseSystemPrompt, skills);
-      const history = memory ? memory.getMessages(sessionId) : [];
-      const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
-        { role: 'system', content: systemPrompt },
-        ...history.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
-        { role: 'user', content: userMessage },
-      ];
-
+      // ── Memory: shared by both modes ───────────────────────────────────────
+      const memHistory = memory ? memory.getMessages(sessionId).map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })) : [];
       if (memory) memory.addMessage(sessionId, { role: 'user', content: userMessage });
 
-      const executionTrace: TraceEntry[] = [];
-      const agentTools = subAgentsToTools(subAgents, sessionId, executionTrace, messages);
-      const skillTool = skills.length > 0 ? [buildSkillTool(skills)] : [];
-      const allTools = [...agentTools, ...mcpTools, ...skillTool];
+      let finalResponse: string;
+      let executionTrace: TraceEntry[];
+      let orchestratorUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, iterations: 0 };
+      let subagentUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
 
-      const loopResult = await runAgentLoop({
-        openai, model, messages, tools: allTools, maxIterations,
-        forceToolUse: agentTools.length > 0,
-      });
-      let finalResponse = loopResult.response;
+      // ── HANDOFF MODE ───────────────────────────────────────────────────────
+      if (executionMode === 'handoff') {
+        const entryAgent = this.getNodeParameter('entryAgent', i, 'gabi') as string;
+        const maxHops = this.getNodeParameter('maxHops', i, 5) as number;
 
-      if (!finalResponse) {
-        throw new NodeOperationError(
-          this.getNode(),
-          `Orchestrator did not produce a response after ${maxIterations} iteration(s).`,
-          { itemIndex: i },
+        if (!agentMap.has(entryAgent)) {
+          throw new NodeOperationError(
+            this.getNode(),
+            `Entry agent "${entryAgent}" not found. Available: ${[...agentMap.keys()].join(', ') || 'none connected'}`,
+            { itemIndex: i },
+          );
+        }
+
+        const chainResult = await runHandoffChain({
+          entryAgent,
+          message: userMessage,
+          agentMap,
+          sessionId,
+          history: memHistory,
+          maxHops,
+        });
+
+        finalResponse = chainResult.response;
+        executionTrace = chainResult.trace;
+        subagentUsage = {
+          prompt_tokens: chainResult.usage.prompt_tokens,
+          completion_tokens: chainResult.usage.completion_tokens,
+          total_tokens: chainResult.usage.total_tokens,
+        };
+
+      // ── ORCHESTRATOR MODE ──────────────────────────────────────────────────
+      } else {
+        const baseSystemPrompt = this.getNodeParameter('systemPrompt', i) as string;
+        const maxIterations = this.getNodeParameter('maxIterations', i, 20) as number;
+        const skillsField = this.getNodeParameter('skillsField', i, '__skills__') as string;
+
+        const inlineSkillsRaw = this.getNodeParameter('inlineSkills', i, { skill: [] }) as {
+          skill: Array<{ name: string; description: string; content: string }>;
+        };
+        const inlineSkills: Skill[] = (inlineSkillsRaw.skill ?? [])
+          .filter((s) => s.name)
+          .map((s) => {
+            const rawContent = s.content ?? '';
+            const content = String(resolveField(item.json, rawContent) ?? rawContent);
+            return { name: s.name, description: s.description, content, tags: [] };
+          });
+
+        const rawLoaderSkills = resolveField(item.json, skillsField);
+        const loaderSkills = (Array.isArray(rawLoaderSkills) ? rawLoaderSkills : []) as Skill[];
+        const loaderNames = new Set(loaderSkills.map((s) => s.name));
+        const skills: Skill[] = [
+          ...inlineSkills.filter((s) => !loaderNames.has(s.name)),
+          ...loaderSkills,
+        ];
+
+        const systemPrompt = composeSystemPrompt(baseSystemPrompt, skills);
+        const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
+          { role: 'system', content: systemPrompt },
+          ...memHistory.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
+          { role: 'user', content: userMessage },
+        ];
+
+        executionTrace = [];
+        const agentTools = subAgentsToTools(subAgents, sessionId, executionTrace, messages);
+        const skillTool = skills.length > 0 ? [buildSkillTool(skills)] : [];
+        const allTools = [...agentTools, ...mcpTools, ...skillTool];
+
+        const loopResult = await runAgentLoop({
+          openai, model, messages, tools: allTools, maxIterations,
+          forceToolUse: agentTools.length > 0,
+        });
+
+        finalResponse = loopResult.response;
+        orchestratorUsage = loopResult.usage;
+
+        if (!finalResponse) {
+          throw new NodeOperationError(
+            this.getNode(),
+            `Orchestrator did not produce a response after ${maxIterations} iteration(s).`,
+            { itemIndex: i },
+          );
+        }
+
+        subagentUsage = executionTrace.reduce(
+          (acc, t) => ({
+            prompt_tokens: acc.prompt_tokens + t.usage.prompt_tokens,
+            completion_tokens: acc.completion_tokens + t.usage.completion_tokens,
+            total_tokens: acc.total_tokens + t.usage.total_tokens,
+          }),
+          { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
         );
       }
 
+      // ── Post guardrails + memory write (both modes) ────────────────────────
       const postBlock = await runGuardrails(finalResponse, guardrailConfigs, 'post', openai, model);
       if (postBlock !== null) finalResponse = postBlock;
 
       if (memory) memory.addMessage(sessionId, { role: 'assistant', content: finalResponse });
-
-      const subagentUsage = executionTrace.reduce(
-        (acc, t) => ({
-          prompt_tokens: acc.prompt_tokens + t.usage.prompt_tokens,
-          completion_tokens: acc.completion_tokens + t.usage.completion_tokens,
-          total_tokens: acc.total_tokens + t.usage.total_tokens,
-        }),
-        { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
-      );
 
       results.push({
         json: {
@@ -305,12 +407,13 @@ export class OrchestratorKit implements INodeType {
           [outputField]: finalResponse,
           executionTrace,
           usage: {
-            ...loopResult.usage,
+            ...orchestratorUsage,
             model,
+            mode: executionMode,
             subagent_prompt_tokens: subagentUsage.prompt_tokens,
             subagent_completion_tokens: subagentUsage.completion_tokens,
             subagent_total_tokens: subagentUsage.total_tokens,
-            grand_total_tokens: loopResult.usage.total_tokens + subagentUsage.total_tokens,
+            grand_total_tokens: orchestratorUsage.total_tokens + subagentUsage.total_tokens,
           },
         } as INodeExecutionData['json'],
         pairedItem: { item: i },
