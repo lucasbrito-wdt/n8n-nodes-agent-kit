@@ -147,7 +147,7 @@ export class OrchestratorKit implements INodeType {
         displayName: 'Entry Agent',
         name: 'entryAgent',
         type: 'string',
-        default: 'gabi',
+        default: '',
         description: 'Name of the first SubAgent to call. Must match the Agent Name set in the SubAgentKit node.',
         displayOptions: { show: { executionMode: ['handoff'] } },
       },
@@ -157,6 +157,43 @@ export class OrchestratorKit implements INodeType {
         type: 'number',
         default: 5,
         description: 'Maximum number of agent-to-agent handoffs before stopping.',
+        displayOptions: { show: { executionMode: ['handoff'] } },
+      },
+      {
+        displayName: 'Routing Map',
+        name: 'routingMap',
+        type: 'fixedCollection',
+        typeOptions: { multipleValues: true },
+        default: {},
+        description: 'Maps crm_instructions.action values to agent names. If an action is not listed here, the chain tries to strip "route_to_" from the value and match an agent by name.',
+        displayOptions: { show: { executionMode: ['handoff'] } },
+        options: [{
+          name: 'route',
+          displayName: 'Route',
+          values: [
+            {
+              displayName: 'Action',
+              name: 'action',
+              type: 'string',
+              default: '',
+              description: 'The crm_instructions.action value returned by an agent (e.g. route_to_closer, escalate).',
+            },
+            {
+              displayName: 'Agent Name',
+              name: 'agentName',
+              type: 'string',
+              default: '',
+              description: 'The SubAgent to call when this action is returned.',
+            },
+          ],
+        }],
+      },
+      {
+        displayName: 'Terminal Actions',
+        name: 'terminalActions',
+        type: 'string',
+        default: 'none, disqualify, human_handoff, contract_generated, awaiting_signature, generate_financial, follow_up_closer, follow_up_sdr',
+        description: 'Comma-separated list of crm_instructions.action values that stop the chain. Edit to match your agents\' output.',
         displayOptions: { show: { executionMode: ['handoff'] } },
       },
 
@@ -304,9 +341,16 @@ export class OrchestratorKit implements INodeType {
 
       // ── HANDOFF MODE ───────────────────────────────────────────────────────
       if (executionMode === 'handoff') {
-        const entryAgent = this.getNodeParameter('entryAgent', i, 'gabi') as string;
+        const entryAgent = this.getNodeParameter('entryAgent', i, '') as string;
         const maxHops = this.getNodeParameter('maxHops', i, 5) as number;
 
+        if (!entryAgent) {
+          throw new NodeOperationError(
+            this.getNode(),
+            'Entry Agent is required in Handoff Chain mode.',
+            { itemIndex: i },
+          );
+        }
         if (!agentMap.has(entryAgent)) {
           throw new NodeOperationError(
             this.getNode(),
@@ -315,6 +359,21 @@ export class OrchestratorKit implements INodeType {
           );
         }
 
+        // Build user-defined routing map
+        const routingMapRaw = this.getNodeParameter('routingMap', i, { route: [] }) as {
+          route: Array<{ action: string; agentName: string }>;
+        };
+        const routingMap: Record<string, string> = {};
+        for (const r of routingMapRaw.route ?? []) {
+          if (r.action && r.agentName) routingMap[r.action] = r.agentName;
+        }
+
+        // Build terminal actions set from the user-defined comma-separated string
+        const terminalActionsRaw = this.getNodeParameter('terminalActions', i, 'none') as string;
+        const terminalActions = new Set(
+          terminalActionsRaw.split(',').map((s) => s.trim()).filter(Boolean),
+        );
+
         const chainResult = await runHandoffChain({
           entryAgent,
           message: userMessage,
@@ -322,6 +381,8 @@ export class OrchestratorKit implements INodeType {
           sessionId,
           history: memHistory,
           maxHops,
+          routingMap,
+          terminalActions,
         });
 
         finalResponse = chainResult.response;

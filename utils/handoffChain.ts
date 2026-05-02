@@ -15,32 +15,11 @@ export interface HandoffChainResult {
   usage: SubAgentUsage;
 }
 
-/** Terminal actions that stop the handoff chain. */
-export const TERMINAL_ACTIONS = new Set([
-  'none', 'disqualify', 'human_handoff',
-  'contract_generated', 'awaiting_signature', 'generate_financial',
-  'follow_up_closer', 'follow_up_sdr',
-]);
-
-/**
- * Resolves the next agent name from a crm_instructions.action value.
- * Supports built-in aliases (route_to_closer → aurora) and generic
- * "route_to_<name>" patterns where <name> matches a connected agent.
- */
-export function resolveNextAgent(action: string, agentMap: Map<string, SubAgent>): string | undefined {
-  const aliases: Record<string, string> = {
-    route_to_closer: 'aurora',
-    route_to_sdr: 'sofia',
-  };
-  const target = aliases[action] ?? action.replace(/^route_to_/, '');
-  return agentMap.has(target) ? target : undefined;
-}
-
 /**
  * Extracts the user-facing text and routing action from any agent output.
- * Handles all output key conventions used across agents:
- *   - content_raw   (Gabi, Aurora, Julia)
- *   - resposta_para_cliente  (Sofia)
+ * Supports multiple output key conventions:
+ *   - content_raw            (most agents)
+ *   - resposta_para_cliente  (Sofia-style)
  * Falls back to the raw string when the output is not valid JSON.
  */
 export function parseAgentOutput(raw: string): { contentRaw: string; action: string } {
@@ -57,26 +36,54 @@ export function parseAgentOutput(raw: string): { contentRaw: string; action: str
   }
 }
 
+/**
+ * Resolves the next agent name from a crm_instructions.action value.
+ *
+ * Resolution order:
+ *  1. User-defined routingMap (action → agentName)
+ *  2. Generic pattern: strips "route_to_" prefix and checks if the remainder
+ *     matches a connected agent name
+ *
+ * Returns undefined when no match is found (chain stops).
+ */
+export function resolveNextAgent(
+  action: string,
+  agentMap: Map<string, SubAgent>,
+  routingMap: Record<string, string> = {},
+): string | undefined {
+  const target = routingMap[action] ?? action.replace(/^route_to_/, '');
+  return agentMap.has(target) ? target : undefined;
+}
+
 export interface HandoffChainParams {
   entryAgent: string;
   message: string;
   agentMap: Map<string, SubAgent>;
   sessionId: string;
-  /** Existing conversation history; will be extended in-place as the chain progresses. */
+  /** Existing conversation history; extended in-place as the chain progresses. */
   history: Array<{ role: 'user' | 'assistant'; content: string }>;
   maxHops: number;
+  /** User-defined action → agentName routing table. */
+  routingMap?: Record<string, string>;
+  /** Actions that stop the chain. Defaults to ['none'] if not provided. */
+  terminalActions?: Set<string>;
 }
 
 /**
  * Runs a deterministic handoff chain.
  *
  * Each agent returns structured JSON with crm_instructions.action.
- * The chain resolves the next agent from the action value and continues
- * until a terminal action is reached or maxHops is exceeded.
+ * The chain resolves the next agent using the user-defined routingMap
+ * (and falls back to the "route_to_<name>" pattern) until a terminal
+ * action is reached or maxHops is exceeded.
  * No orchestrator LLM is involved — routing is pure code.
  */
 export async function runHandoffChain(params: HandoffChainParams): Promise<HandoffChainResult> {
-  const { entryAgent, message, agentMap, sessionId, history, maxHops } = params;
+  const {
+    entryAgent, message, agentMap, sessionId, history, maxHops,
+    routingMap = {},
+    terminalActions = new Set(['none']),
+  } = params;
 
   let currentAgentName = entryAgent;
   let currentTask = message;
@@ -113,13 +120,12 @@ export async function runHandoffChain(params: HandoffChainParams): Promise<Hando
       usage: result.usage,
     });
 
-    // Accumulate history so the next stateless agent has full context
     history.push({ role: 'user', content: currentTask });
     history.push({ role: 'assistant', content: contentRaw });
 
-    if (TERMINAL_ACTIONS.has(action)) break;
+    if (terminalActions.has(action)) break;
 
-    const nextAgent = resolveNextAgent(action, agentMap);
+    const nextAgent = resolveNextAgent(action, agentMap, routingMap);
     if (!nextAgent) break;
 
     currentAgentName = nextAgent;

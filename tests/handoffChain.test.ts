@@ -1,4 +1,4 @@
-import { runHandoffChain, parseAgentOutput, resolveNextAgent, TERMINAL_ACTIONS } from '../utils/handoffChain';
+import { runHandoffChain, parseAgentOutput, resolveNextAgent } from '../utils/handoffChain';
 import type { SubAgent } from '../nodes/SubAgentKit/SubAgentKit.node';
 
 function makeAgent(name: string, response: string, stateless = true): SubAgent {
@@ -48,24 +48,33 @@ describe('resolveNextAgent', () => {
     ['julia', makeAgent('julia', '')],
   ]);
 
-  it('resolves route_to_sofia → sofia', () => {
+  it('resolves route_to_sofia via generic pattern', () => {
     expect(resolveNextAgent('route_to_sofia', agents)).toBe('sofia');
   });
 
-  it('resolves route_to_closer alias → aurora', () => {
-    expect(resolveNextAgent('route_to_closer', agents)).toBe('aurora');
+  it('resolves user-defined alias via routingMap', () => {
+    expect(resolveNextAgent('route_to_closer', agents, { route_to_closer: 'aurora' })).toBe('aurora');
   });
 
-  it('resolves route_to_sdr alias → sofia', () => {
-    expect(resolveNextAgent('route_to_sdr', agents)).toBe('sofia');
+  it('routingMap takes priority over generic pattern', () => {
+    // action "route_to_sofia" remapped to julia via user config
+    expect(resolveNextAgent('route_to_sofia', agents, { route_to_sofia: 'julia' })).toBe('julia');
   });
 
-  it('returns undefined for unknown agent', () => {
+  it('returns undefined when action does not match any agent without routingMap', () => {
+    expect(resolveNextAgent('route_to_closer', agents)).toBeUndefined();
+  });
+
+  it('returns undefined for unknown agent even with prefix stripped', () => {
     expect(resolveNextAgent('route_to_unknown', agents)).toBeUndefined();
   });
 
-  it('returns undefined for terminal action', () => {
-    expect(resolveNextAgent('none', agents)).toBeUndefined();
+  it('returns undefined when no routingMap entry and name not in agentMap', () => {
+    expect(resolveNextAgent('escalate', agents)).toBeUndefined();
+  });
+
+  it('resolves arbitrary action via routingMap (no route_to_ prefix)', () => {
+    expect(resolveNextAgent('escalate', agents, { escalate: 'julia' })).toBe('julia');
   });
 });
 
@@ -125,7 +134,7 @@ describe('runHandoffChain', () => {
     expect(result.trace).toHaveLength(2);
   });
 
-  it('chains gabi → sofia → aurora (full closer flow)', async () => {
+  it('chains gabi → sofia → aurora using user-defined routingMap', async () => {
     const agentsCalled: string[] = [];
 
     const agentMap = new Map<string, SubAgent>([
@@ -137,6 +146,8 @@ describe('runHandoffChain', () => {
     const result = await runHandoffChain({
       entryAgent: 'gabi', message: 'quero contratar', agentMap,
       sessionId: 's2', history: [], maxHops: 5,
+      routingMap: { route_to_closer: 'aurora' },
+      terminalActions: new Set(['none', 'disqualify']),
     });
 
     expect(agentsCalled).toEqual(['gabi', 'sofia', 'aurora']);
@@ -144,7 +155,7 @@ describe('runHandoffChain', () => {
     expect(result.trace).toHaveLength(3);
   });
 
-  it('stops on terminal action disqualify', async () => {
+  it('stops on terminal action defined by user', async () => {
     const agentMap = new Map<string, SubAgent>([
       ['gabi', { name: 'gabi', description: '', stateless: true, call: async () => ({ response: JSON.stringify({ content_raw: 'Sem perfil.', crm_instructions: { action: 'disqualify' } }), usage: { prompt_tokens: 5, completion_tokens: 2, total_tokens: 7, iterations: 1 } }) }],
       ['sofia', { name: 'sofia', description: '', stateless: true, call: async () => ({ response: JSON.stringify({ resposta_para_cliente: 'should not be called', crm_instructions: { action: 'none' } }), usage: { prompt_tokens: 5, completion_tokens: 2, total_tokens: 7, iterations: 1 } }) }],
@@ -153,6 +164,7 @@ describe('runHandoffChain', () => {
     const result = await runHandoffChain({
       entryAgent: 'gabi', message: 'oi', agentMap,
       sessionId: 's3', history: [], maxHops: 5,
+      terminalActions: new Set(['none', 'disqualify']),
     });
 
     expect(result.trace).toHaveLength(1);
