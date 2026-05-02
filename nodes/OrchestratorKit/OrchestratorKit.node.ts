@@ -12,7 +12,7 @@ import { runGuardrails } from '../AgentKit/guardrails/index';
 import type { GuardrailConfig } from '../AgentKit/guardrails/types';
 import type { IAgentMemory } from '../AgentMemory/AgentMemory.node';
 import type { McpTool } from '../McpGateway/McpGateway.node';
-import type { SubAgent, SubAgentUsage } from '../SubAgentKit/SubAgentKit.node';
+import type { SubAgent, SubAgentContext, SubAgentUsage } from '../SubAgentKit/SubAgentKit.node';
 import { composeSystemPrompt, buildSkillTool } from '../../utils/skillParser';
 import type { Skill } from '../../utils/skillParser';
 
@@ -25,19 +25,47 @@ interface TraceEntry {
   usage: SubAgentUsage;
 }
 
-function subAgentsToTools(subAgents: SubAgent[], sessionId: string, trace: TraceEntry[]): McpTool[] {
+function subAgentsToTools(
+  subAgents: SubAgent[],
+  sessionId: string,
+  trace: TraceEntry[],
+  orchestratorMessages: OpenAI.Chat.ChatCompletionMessageParam[],
+): McpTool[] {
   return subAgents.map((agent) => ({
     name: agent.name,
     description: agent.description,
     inputSchema: {
       type: 'object',
-      properties: { task: { type: 'string', description: 'Task to delegate to this agent.' } },
+      properties: {
+        task: { type: 'string', description: 'Task to delegate to this agent.' },
+        context: {
+          type: 'string',
+          description: 'Optional JSON string with relevant state to pass (e.g. contact info, CRM data, lead details).',
+        },
+      },
       required: ['task'],
     },
     call: async (args: Record<string, unknown>) => {
       const task = String(args.task ?? '');
+
+      let state: Record<string, unknown> | undefined;
+      if (args.context) {
+        try {
+          state = JSON.parse(String(args.context)) as Record<string, unknown>;
+        } catch { /* ignore malformed context */ }
+      }
+
+      // For stateless agents, forward the orchestrator's conversation history
+      const history = agent.stateless
+        ? orchestratorMessages
+            .filter((m) => m.role === 'user' || m.role === 'assistant')
+            .map((m) => ({ role: m.role as 'user' | 'assistant', content: String(m.content ?? '') }))
+        : undefined;
+
+      const subAgentContext: SubAgentContext = { task, history, state };
+
       const start = Date.now();
-      const result = await agent.call(task, sessionId);
+      const result = await agent.call(subAgentContext, sessionId);
       trace.push({
         step: trace.length + 1,
         agent: agent.name,
@@ -55,7 +83,7 @@ export class OrchestratorKit implements INodeType {
   description: INodeTypeDescription = {
     displayName: 'Orchestrator Kit',
     name: 'orchestratorKit',
-    icon: 'fa:sitemap',
+    icon: 'fa:brain',
     group: ['transform'],
     version: 1,
     description: 'Supervisor agent that delegates tasks to connected SubAgentKit nodes.',
@@ -239,7 +267,7 @@ export class OrchestratorKit implements INodeType {
       if (memory) memory.addMessage(sessionId, { role: 'user', content: userMessage });
 
       const executionTrace: TraceEntry[] = [];
-      const agentTools = subAgentsToTools(subAgents, sessionId, executionTrace);
+      const agentTools = subAgentsToTools(subAgents, sessionId, executionTrace, messages);
       const skillTool = skills.length > 0 ? [buildSkillTool(skills)] : [];
       const allTools = [...agentTools, ...mcpTools, ...skillTool];
 
@@ -262,12 +290,28 @@ export class OrchestratorKit implements INodeType {
 
       if (memory) memory.addMessage(sessionId, { role: 'assistant', content: finalResponse });
 
+      const subagentUsage = executionTrace.reduce(
+        (acc, t) => ({
+          prompt_tokens: acc.prompt_tokens + t.usage.prompt_tokens,
+          completion_tokens: acc.completion_tokens + t.usage.completion_tokens,
+          total_tokens: acc.total_tokens + t.usage.total_tokens,
+        }),
+        { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+      );
+
       results.push({
         json: {
           ...item.json,
           [outputField]: finalResponse,
           executionTrace,
-          usage: { ...loopResult.usage, model },
+          usage: {
+            ...loopResult.usage,
+            model,
+            subagent_prompt_tokens: subagentUsage.prompt_tokens,
+            subagent_completion_tokens: subagentUsage.completion_tokens,
+            subagent_total_tokens: subagentUsage.total_tokens,
+            grand_total_tokens: loopResult.usage.total_tokens + subagentUsage.total_tokens,
+          },
         } as INodeExecutionData['json'],
         pairedItem: { item: i },
       });

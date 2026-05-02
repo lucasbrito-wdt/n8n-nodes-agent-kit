@@ -26,10 +26,20 @@ export interface SubAgentResult {
   usage: SubAgentUsage;
 }
 
+export interface SubAgentContext {
+  task: string;
+  /** Conversation history injected by the orchestrator (for stateless agents). */
+  history?: Array<{ role: 'user' | 'assistant'; content: string }>;
+  /** Arbitrary state passed from the orchestrator (CRM data, contact info, etc.). */
+  state?: Record<string, unknown>;
+}
+
 export interface SubAgent {
   name: string;
   description: string;
-  call: (task: string, sessionId: string) => Promise<SubAgentResult>;
+  /** When true the agent uses orchestrator-provided history; it does not maintain its own session state. */
+  stateless: boolean;
+  call: (context: SubAgentContext, sessionId: string) => Promise<SubAgentResult>;
 }
 
 export class SubAgentKit implements INodeType {
@@ -83,6 +93,13 @@ export class SubAgentKit implements INodeType {
         name: 'maxIterations',
         type: 'number',
         default: 10,
+      },
+      {
+        displayName: 'Stateless Mode',
+        name: 'stateless',
+        type: 'boolean',
+        default: false,
+        description: 'When enabled, the agent receives conversation history from the orchestrator instead of maintaining its own session memory. Recommended for agents that do not use tools (e.g. Gabi, Sofia, Aurora).',
       },
       {
         displayName: 'Inline Skills',
@@ -156,6 +173,7 @@ export class SubAgentKit implements INodeType {
     const baseSystemPrompt = this.getNodeParameter('systemPrompt', 0) as string;
     const modelOverride = this.getNodeParameter('modelOverride', 0, '') as string;
     const maxIterations = this.getNodeParameter('maxIterations', 0, 10) as number;
+    const stateless = this.getNodeParameter('stateless', 0, false) as boolean;
     const model = modelOverride || (creds.model as string) || 'qwen/qwen3-235b-a22b';
 
     const inlineSkillsRaw = this.getNodeParameter('inlineSkills', 0, { skill: [] }) as {
@@ -184,12 +202,14 @@ export class SubAgentKit implements INodeType {
     }));
 
     let memory: IAgentMemory | null = null;
-    try {
-      const memData = await this.getInputConnectionData(NodeConnectionTypes.AiMemory, 0);
-      if (Array.isArray(memData) && memData.length > 0) {
-        memory = (memData[0] as IAgentMemory) ?? null;
-      }
-    } catch { /* no memory */ }
+    if (!stateless) {
+      try {
+        const memData = await this.getInputConnectionData(NodeConnectionTypes.AiMemory, 0);
+        if (Array.isArray(memData) && memData.length > 0) {
+          memory = (memData[0] as IAgentMemory) ?? null;
+        }
+      } catch { /* no memory */ }
+    }
 
     let tools: McpTool[] = [];
     try {
@@ -199,26 +219,45 @@ export class SubAgentKit implements INodeType {
       }
     } catch { /* no tools */ }
 
+    // Internal session history only used when stateless=false and no external memory
     const sessionHistory = new Map<string, Array<{ role: 'user' | 'assistant'; content: string }>>();
 
     const subAgent: SubAgent = {
       name: agentName,
       description: agentDescription,
-      call: async (task: string, sessionId: string) => {
-        const preBlock = await runGuardrails(task, guardrailConfigs, 'pre', openai, model);
-        if (preBlock !== null) return { response: preBlock, usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, iterations: 0 } };
+      stateless,
+      call: async (context: SubAgentContext, sessionId: string) => {
+        const { task, history: injectedHistory, state } = context;
 
-        const history = memory
-          ? memory.getMessages(sessionId).map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content }))
-          : (sessionHistory.get(sessionId) ?? []);
+        const preBlock = await runGuardrails(task, guardrailConfigs, 'pre', openai, model);
+        if (preBlock !== null) {
+          return { response: preBlock, usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, iterations: 0 } };
+        }
+
+        let history: Array<{ role: 'user' | 'assistant'; content: string }>;
+
+        if (stateless) {
+          // Stateless: use orchestrator-provided history (no internal state)
+          history = injectedHistory ?? [];
+        } else {
+          // Stateful: read from memory or internal session map
+          history = memory
+            ? memory.getMessages(sessionId).map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content }))
+            : (sessionHistory.get(sessionId) ?? []);
+        }
+
+        // Prepend state as a system context block if provided
+        const stateBlock = state && Object.keys(state).length > 0
+          ? `\n\n[Context from orchestrator]\n${JSON.stringify(state, null, 2)}`
+          : '';
+
+        const userContent = stateBlock ? `${task}\n${stateBlock}` : task;
 
         const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
           { role: 'system', content: systemPrompt },
           ...history,
-          { role: 'user', content: task },
+          { role: 'user', content: userContent },
         ];
-
-        if (memory) memory.addMessage(sessionId, { role: 'user', content: task });
 
         const allTools = skills.length > 0 ? [...tools, buildSkillTool(skills)] : tools;
         const result = await runAgentLoop({ openai, model, messages, tools: allTools, maxIterations });
@@ -227,13 +266,16 @@ export class SubAgentKit implements INodeType {
         const postBlock = await runGuardrails(response, guardrailConfigs, 'post', openai, model);
         const finalResponse = postBlock ?? response;
 
-        if (memory) {
-          memory.addMessage(sessionId, { role: 'assistant', content: finalResponse });
-        } else {
-          const h = sessionHistory.get(sessionId) ?? [];
-          h.push({ role: 'user', content: task });
-          h.push({ role: 'assistant', content: finalResponse });
-          sessionHistory.set(sessionId, h);
+        if (!stateless) {
+          if (memory) {
+            memory.addMessage(sessionId, { role: 'user', content: task });
+            memory.addMessage(sessionId, { role: 'assistant', content: finalResponse });
+          } else {
+            const h = sessionHistory.get(sessionId) ?? [];
+            h.push({ role: 'user', content: task });
+            h.push({ role: 'assistant', content: finalResponse });
+            sessionHistory.set(sessionId, h);
+          }
         }
 
         return { response: finalResponse, usage: result.usage };
