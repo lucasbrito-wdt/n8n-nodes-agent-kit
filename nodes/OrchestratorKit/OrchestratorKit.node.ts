@@ -5,6 +5,7 @@ import type {
   INodeTypeDescription,
 } from 'n8n-workflow';
 import { NodeConnectionTypes, NodeOperationError } from 'n8n-workflow';
+import { resolveField } from '../../utils/fieldResolver';
 import OpenAI from 'openai';
 import { runAgentLoop } from '../../utils/subAgentRunner';
 import { runGuardrails } from '../AgentKit/guardrails/index';
@@ -12,7 +13,7 @@ import type { GuardrailConfig } from '../AgentKit/guardrails/types';
 import type { IAgentMemory } from '../AgentMemory/AgentMemory.node';
 import type { McpTool } from '../McpGateway/McpGateway.node';
 import type { SubAgent, SubAgentUsage } from '../SubAgentKit/SubAgentKit.node';
-import { composeSystemPrompt } from '../../utils/skillParser';
+import { composeSystemPrompt, buildSkillTool } from '../../utils/skillParser';
 import type { Skill } from '../../utils/skillParser';
 
 interface TraceEntry {
@@ -79,6 +80,13 @@ export class OrchestratorKit implements INodeType {
       { displayName: 'Model Override', name: 'modelOverride', type: 'string', default: '' },
       { displayName: 'Max Iterations', name: 'maxIterations', type: 'number', default: 20 },
       { displayName: 'Output Field', name: 'outputField', type: 'string', default: 'response' },
+      {
+        displayName: 'Skills Field',
+        name: 'skillsField',
+        type: 'string',
+        default: '__skills__',
+        description: 'Field path in the input JSON that carries skills from a Skill Loader node. Supports dot/bracket notation (e.g. __skills__, data.skills).',
+      },
       {
         displayName: 'Inline Skills', name: 'inlineSkills', type: 'fixedCollection',
         typeOptions: { multipleValues: true }, default: {},
@@ -165,17 +173,31 @@ export class OrchestratorKit implements INodeType {
       const modelOverride = this.getNodeParameter('modelOverride', i, '') as string;
       const maxIterations = this.getNodeParameter('maxIterations', i, 20) as number;
       const outputField = this.getNodeParameter('outputField', i, 'response') as string;
+      const skillsField = this.getNodeParameter('skillsField', i, '__skills__') as string;
       const model = modelOverride || (creds.model as string) || 'qwen/qwen3-235b-a22b';
 
-      const userMessage = String(item.json[inputField] ?? '');
-      const sessionId = String(item.json[sessionIdField] ?? `session-${i}`);
+      const userMessage = String(resolveField(item.json, inputField) ?? '');
+      const sessionId = String(resolveField(item.json, sessionIdField) ?? `session-${i}`);
 
       const inlineSkillsRaw = this.getNodeParameter('inlineSkills', i, { skill: [] }) as {
         skill: Array<{ name: string; description: string; content: string }>;
       };
-      const skills: Skill[] = (inlineSkillsRaw.skill ?? [])
+      const inlineSkills: Skill[] = (inlineSkillsRaw.skill ?? [])
         .filter((s) => s.name)
-        .map((s) => ({ name: s.name, description: s.description, content: s.content, tags: [] }));
+        .map((s) => {
+          const rawContent = s.content ?? '';
+          const content = String(resolveField(item.json, rawContent) ?? rawContent);
+          return { name: s.name, description: s.description, content, tags: [] };
+        });
+
+      const rawLoaderSkills = resolveField(item.json, skillsField);
+      const loaderSkills = (Array.isArray(rawLoaderSkills) ? rawLoaderSkills : []) as Skill[];
+      // Loader skills override inline skills with the same name
+      const loaderNames = new Set(loaderSkills.map((s) => s.name));
+      const skills: Skill[] = [
+        ...inlineSkills.filter((s) => !loaderNames.has(s.name)),
+        ...loaderSkills,
+      ];
 
       const guardrailsRaw = this.getNodeParameter('guardrails', i, { guardrail: [] }) as {
         guardrail: Array<{ name: string; phase: string; type: string; fallbackResponse: string; keywords?: string; pattern?: string }>;
@@ -218,7 +240,8 @@ export class OrchestratorKit implements INodeType {
 
       const executionTrace: TraceEntry[] = [];
       const agentTools = subAgentsToTools(subAgents, sessionId, executionTrace);
-      const allTools = [...agentTools, ...mcpTools];
+      const skillTool = skills.length > 0 ? [buildSkillTool(skills)] : [];
+      const allTools = [...agentTools, ...mcpTools, ...skillTool];
 
       const loopResult = await runAgentLoop({
         openai, model, messages, tools: allTools, maxIterations,

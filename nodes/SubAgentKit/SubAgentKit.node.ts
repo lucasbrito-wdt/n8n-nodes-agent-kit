@@ -11,7 +11,7 @@ import { runGuardrails } from '../AgentKit/guardrails/index';
 import type { GuardrailConfig } from '../AgentKit/guardrails/types';
 import type { IAgentMemory } from '../AgentMemory/AgentMemory.node';
 import type { McpTool } from '../McpGateway/McpGateway.node';
-import { composeSystemPrompt } from '../../utils/skillParser';
+import { composeSystemPrompt, buildSkillTool } from '../../utils/skillParser';
 import type { Skill } from '../../utils/skillParser';
 
 export interface SubAgentUsage {
@@ -220,7 +220,8 @@ export class SubAgentKit implements INodeType {
 
         if (memory) memory.addMessage(sessionId, { role: 'user', content: task });
 
-        const result = await runAgentLoop({ openai, model, messages, tools, maxIterations });
+        const allTools = skills.length > 0 ? [...tools, buildSkillTool(skills)] : tools;
+        const result = await runAgentLoop({ openai, model, messages, tools: allTools, maxIterations });
         const response = result.response || 'No response generated.';
 
         const postBlock = await runGuardrails(response, guardrailConfigs, 'post', openai, model);

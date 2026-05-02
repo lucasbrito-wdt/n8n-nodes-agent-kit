@@ -11,7 +11,10 @@ function subAgentsToTools(subAgents: SubAgent[], sessionId: string): McpTool[] {
       properties: { task: { type: 'string' } },
       required: ['task'],
     },
-    call: async (args: Record<string, unknown>) => agent.call(String(args.task ?? ''), sessionId),
+    call: async (args: Record<string, unknown>) => {
+      const result = await agent.call(String(args.task ?? ''), sessionId);
+      return typeof result === 'string' ? result : result.response;
+    },
   }));
 }
 
@@ -20,7 +23,7 @@ describe('Orchestrator supervisor pattern', () => {
     const researcher: SubAgent = {
       name: 'researcher',
       description: 'Does research',
-      call: async (task) => `Research result for: ${task}`,
+      call: async (task) => ({ response: `Research result for: ${task}`, usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, iterations: 0 } }),
     };
 
     let toolCallCount = 0;
@@ -65,8 +68,8 @@ describe('Orchestrator supervisor pattern', () => {
   });
 
   it('handles multiple sub-agents', async () => {
-    const researcher: SubAgent = { name: 'researcher', description: 'research', call: async () => 'facts' };
-    const writer: SubAgent = { name: 'writer', description: 'write', call: async () => 'article' };
+    const researcher: SubAgent = { name: 'researcher', description: 'research', call: async () => ({ response: 'facts', usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, iterations: 0 } }) };
+    const writer: SubAgent = { name: 'writer', description: 'write', call: async () => ({ response: 'article', usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, iterations: 0 } }) };
 
     const tools = subAgentsToTools([researcher, writer], 'session-2');
     expect(tools).toHaveLength(2);
@@ -84,7 +87,7 @@ describe('Orchestrator supervisor pattern', () => {
     const calls: string[] = [];
     const agent: SubAgent = {
       name: 'tracker', description: 'tracks',
-      call: async (task, sessionId) => { calls.push(sessionId); return 'ok'; },
+      call: async (task, sessionId) => { calls.push(sessionId); return { response: 'ok', usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, iterations: 0 } }; },
     };
     const tools = subAgentsToTools([agent], 'my-session-id');
     await tools[0].call({ task: 'do something' });

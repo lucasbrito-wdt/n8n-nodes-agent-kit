@@ -8,6 +8,7 @@ import { NodeConnectionTypes, NodeOperationError } from 'n8n-workflow';
 import { parseSkill } from '../../utils/skillParser';
 import type { Skill } from '../../utils/skillParser';
 import { GitHubLoader } from '../../utils/githubLoader';
+import { resolveField } from '../../utils/fieldResolver';
 
 interface InlineSkillEntry {
   content: string;
@@ -38,7 +39,7 @@ export class SkillLoader implements INodeType {
         type: 'fixedCollection',
         typeOptions: { multipleValues: true },
         default: {},
-        description: 'Skills defined directly in the node (SKILL.md format with YAML frontmatter).',
+        description: 'Skills defined directly in the node (SKILL.md format with YAML frontmatter). Supports expressions and field paths (e.g. msg.skillContent).',
         options: [
           {
             name: 'skill',
@@ -50,10 +51,18 @@ export class SkillLoader implements INodeType {
                 type: 'string',
                 typeOptions: { rows: 10 },
                 default: '---\nname: my-skill\ndescription: What this skill does.\n---\n\n# My Skill\n\nInstructions here.',
+                description: 'SKILL.md content or a field path / expression resolving to it (e.g. {{ $json["skillContent"] }} or skills.mySkill).',
               },
             ],
           },
         ],
+      },
+      {
+        displayName: 'Skills Field',
+        name: 'skillsField',
+        type: 'string',
+        default: '',
+        description: 'Optional. Field path in the input JSON that contains an array of skill objects (e.g. __skills__, data.skills). Leave empty to skip.',
       },
       {
         displayName: 'Load from GitHub',
@@ -112,24 +121,9 @@ export class SkillLoader implements INodeType {
 
   async execute(this: IExecuteFunctions): Promise<INodeExecutionData[][]> {
     const items = this.getInputData();
-    const skills: Skill[] = [];
 
-    // Load inline skills
-    const inlineSkills = this.getNodeParameter('inlineSkills', 0, { skill: [] }) as {
-      skill: InlineSkillEntry[];
-    };
-    for (const entry of inlineSkills.skill ?? []) {
-      try {
-        skills.push(parseSkill(entry.content));
-      } catch (err) {
-        throw new NodeOperationError(
-          this.getNode(),
-          `Invalid inline skill: ${(err as Error).message}`,
-        );
-      }
-    }
-
-    // Load GitHub skills
+    // GitHub skills are loaded once and shared across all items
+    let githubSkills: Skill[] = [];
     const enableGithub = this.getNodeParameter('enableGithub', 0, false) as boolean;
     if (enableGithub) {
       const credentials = await this.getCredentials('githubSkillsApi');
@@ -160,11 +154,10 @@ export class SkillLoader implements INodeType {
       });
 
       try {
-        const githubSkills =
+        githubSkills =
           selected.trim() === '*'
             ? await loader.loadAll()
             : await loader.loadSelected(selected.split(',').map((s) => s.trim()));
-        skills.push(...githubSkills);
       } catch (err) {
         throw new NodeOperationError(
           this.getNode(),
@@ -173,12 +166,56 @@ export class SkillLoader implements INodeType {
       }
     }
 
-    // Attach skills to every item
-    return [
-      items.map((item) => ({
+    const results: INodeExecutionData[] = [];
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+
+      // Inline skills are resolved per-item so expressions like {{ $json.skillContent }}
+      // and field paths like "msg.skillContent" work correctly for each item.
+      const inlineSkillsRaw = this.getNodeParameter('inlineSkills', i, { skill: [] }) as {
+        skill: InlineSkillEntry[];
+      };
+
+      const inlineSkills: Skill[] = [];
+      for (const entry of inlineSkillsRaw.skill ?? []) {
+        // Support field path resolution: if content looks like a path, resolve it from item.json
+        const rawContent = entry.content ?? '';
+        const content = String(resolveField(item.json, rawContent) ?? rawContent);
+        if (!content.trim()) continue;
+        try {
+          inlineSkills.push(parseSkill(content));
+        } catch (err) {
+          throw new NodeOperationError(
+            this.getNode(),
+            `Invalid inline skill: ${(err as Error).message}`,
+            { itemIndex: i },
+          );
+        }
+      }
+
+      // Optional: pull additional skills from a configurable field in item.json
+      const skillsField = this.getNodeParameter('skillsField', i, '') as string;
+      let fieldSkills: Skill[] = [];
+      if (skillsField) {
+        const raw = resolveField(item.json, skillsField);
+        if (Array.isArray(raw)) {
+          fieldSkills = raw as Skill[];
+        }
+      }
+
+      // Merge: inline first, then field skills, then GitHub — later entries override by name
+      const merged = new Map<string, Skill>();
+      for (const s of [...inlineSkills, ...fieldSkills, ...githubSkills]) {
+        merged.set(s.name, s);
+      }
+
+      results.push({
         ...item,
-        json: { ...item.json, __skills__: skills },
-      })),
-    ];
+        json: { ...item.json, __skills__: Array.from(merged.values()) },
+      });
+    }
+
+    return [results];
   }
 }
