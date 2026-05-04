@@ -28,17 +28,29 @@ export async function runAgentLoop(params: AgentLoopParams): Promise<AgentLoopRe
   const openaiTools = tools.length > 0 ? toolsToOpenAI(tools) : undefined;
   const usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, iterations: 0 };
   let finalResponse = '';
+  let toolChoiceUnsupported = false;
 
   while (usage.iterations < Math.max(1, maxIterations)) {
     usage.iterations++;
     const isFirstIteration = usage.iterations === 1;
-    const toolChoice = openaiTools
+    const toolChoice = openaiTools && !toolChoiceUnsupported
       ? (forceToolUse && isFirstIteration ? 'required' : 'auto')
       : undefined;
-    const response = await openai.chat.completions.create({
-      model, messages,
-      ...(openaiTools ? { tools: openaiTools, tool_choice: toolChoice } : {}),
-    });
+    let response;
+    try {
+      response = await openai.chat.completions.create({
+        model, messages,
+        ...(openaiTools ? { tools: openaiTools, ...(toolChoice ? { tool_choice: toolChoice } : {}) } : {}),
+      });
+    } catch (err) {
+      const msg = (err as Error).message ?? '';
+      if (!toolChoiceUnsupported && /tool_choice/i.test(msg)) {
+        toolChoiceUnsupported = true;
+        usage.iterations--;
+        continue;
+      }
+      throw err;
+    }
 
     if (response.usage) {
       usage.prompt_tokens += response.usage.prompt_tokens;
